@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Minecraft Progression Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    background-color: #0a0a0a; margin: 0; padding: 0;
+    font-family: 'VT323', monospace;
+    color: #e8e8e8; overflow: hidden;
+  }
+  #cy { width: 100vw; height: 100vh; display: block; }
+
+  #top-bar {
+    position: absolute; top: 14px; left: 14px; right: 14px;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    pointer-events: none;
+  }
+  #title-box { pointer-events: auto; }
+  #title-box h1 {
+    margin: 0; font-size: 26px; font-weight: 400; letter-spacing: 0.02em;
+    text-shadow: 2px 2px 0 #000;
+  }
+
+  #search-box {
+    pointer-events: auto;
+    background: #141414; border: 2px solid #2c2c2c;
+    border-radius: 3px; padding: 6px 10px;
+  }
+  #search-box input {
+    background: transparent; border: none; outline: none; color: #e8e8e8;
+    font-family: 'VT323', monospace; font-size: 18px; width: 190px;
+  }
+  #search-box input::placeholder { color: #555; }
+
+  #details-pane {
+    position: absolute; top: 70px; right: 14px; width: 300px; padding: 16px 18px;
+    background: #141414;
+    border: 2px solid #2c2c2c; border-radius: 3px;
+    box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.15s ease;
+  }
+  #details-pane.active { opacity: 1; pointer-events: auto; }
+  #details-pane .pane-header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  #details-pane img { width: 44px; height: 44px; image-rendering: pixelated; flex-shrink: 0; }
+  #details-pane h3 { margin: 0; font-size: 21px; font-weight: 400; }
+  #details-pane .tier-tag {
+    display: inline-block; margin-top: 3px; font-size: 13px;
+    letter-spacing: 0.04em; padding: 1px 7px; border-radius: 2px; color: #0d0d0d; font-weight: 700;
+  }
+  #details-pane p.desc { font-size: 16px; line-height: 1.35; color: #c4c4c4; margin: 8px 0 10px; }
+  #details-pane .rel-title { font-size: 13px; letter-spacing: 0.06em; color: #6a6a6a; margin: 10px 0 3px; text-transform: uppercase; }
+  #details-pane .rel-list { font-size: 15px; line-height: 1.4; color: #b0b0b0; }
+  #details-pane .rel-list span.arrow { margin-right: 4px; }
+  #details-pane .close-btn {
+    position: absolute; top: 8px; right: 10px; cursor: pointer; color: #555; font-size: 18px;
+    pointer-events: auto; font-family: monospace;
+  }
+  #details-pane .close-btn:hover { color: #fff; }
+
+  #legend {
+    position: absolute; bottom: 18px; right: 14px;
+    background: #141414; border: 2px solid #2c2c2c;
+    border-radius: 3px; padding: 8px 12px;
+    font-size: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px 14px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; color: #999; cursor: pointer; user-select: none; }
+  .legend-item.off { opacity: 0.3; }
+  .legend-item .swatch { width: 9px; height: 9px; border-radius: 1px; display: inline-block; }
+
+  .controls { position: absolute; bottom: 18px; left: 14px; display: flex; gap: 8px; }
+  .btn {
+    background: #141414; border: 2px solid #2c2c2c; color: #e8e8e8;
+    padding: 6px 14px; border-radius: 3px; font-size: 16px; cursor: pointer;
+    font-family: 'VT323', monospace; transition: all 0.12s ease;
+  }
+  .btn:hover { background: #232323; border-color: #444; }
+</style>
+</head>
+<body>
+  <div id="cy"></div>
+
+  <div id="top-bar">
+    <div id="title-box">
+      <h1>Minecraft Progression Map</h1>
+    </div>
+    <div id="search-box">
+      <input id="search-input" type="text" placeholder="search..." />
+    </div>
+  </div>
+
+  <div id="details-pane">
+    <span class="close-btn" id="pane-close">&times;</span>
+    <div class="pane-header">
+      <img id="pane-img" src="" alt=""/>
+      <div>
+        <h3 id="pane-title"></h3>
+        <span class="tier-tag" id="pane-tier"></span>
+      </div>
+    </div>
+    <p class="desc" id="pane-desc"></p>
+    <div class="rel-title">Requires / obtained from</div>
+    <div class="rel-list" id="pane-incoming"></div>
+    <div class="rel-title">Leads to / unlocks</div>
+    <div class="rel-list" id="pane-outgoing"></div>
+  </div>
+
+  <div id="legend"></div>
+
+  <div class="controls">
+    <button class="btn" id="fit-btn">Fit View</button>
+    <button class="btn" id="layout-dagre-btn">Structured Flow</button>
+    <button class="btn" id="layout-cose-btn">Organic Physics</button>
+  </div>
+
+<script>
+cytoscape.use(cytoscapeDagre);
+
+var graphData = {"nodes": [{"data": {"id": "oak_log", "label": "Wood Log", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/oak_log.png", "tier": "wood", "desc": "Chop any tree to get logs. The very first resource in the game \u2014 everything begins here.", "color": "#8a6a4a"}}, {"data": {"id": "oak_planks", "label": "Wooden Planks", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/oak_planks.png", "tier": "wood", "desc": "Craft 1 log into 4 planks. The base building block for early tools and structures.", "color": "#8a6a4a"}}, {"data": {"id": "stick", "label": "Stick", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/stick.png", "tier": "wood", "desc": "2 planks (stacked) make 4 sticks. Used as handles for almost every tool and weapon.", "color": "#8a6a4a"}}, {"data": {"id": "crafting_table", "label": "Crafting Table", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/crafting_table_front.png", "tier": "wood", "desc": "4 planks in a square. Gives access to the full 3x3 crafting grid needed for tools, armor and more.", "color": "#8a6a4a"}}, {"data": {"id": "wooden_pickaxe", "label": "Wooden Pickaxe", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/wooden_pickaxe.png", "tier": "wood", "desc": "2 planks + 3... actually 3 planks + 2 sticks. The minimum tool needed to mine cobblestone.", "color": "#8a6a4a"}}, {"data": {"id": "wooden_axe", "label": "Wooden Axe", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/wooden_axe.png", "tier": "wood", "desc": "3 planks + 2 sticks. Doubles the speed of chopping wood.", "color": "#8a6a4a"}}, {"data": {"id": "wooden_sword", "label": "Wooden Sword", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/wooden_sword.png", "tier": "wood", "desc": "2 planks + 1 stick. A basic weapon for early defense.", "color": "#8a6a4a"}}, {"data": {"id": "wooden_shovel", "label": "Wooden Shovel", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/wooden_shovel.png", "tier": "wood", "desc": "1 plank + 2 sticks. Speeds up digging dirt, sand and gravel.", "color": "#8a6a4a"}}, {"data": {"id": "wooden_hoe", "label": "Wooden Hoe", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/wooden_hoe.png", "tier": "wood", "desc": "2 planks + 2 sticks. Tills dirt into farmland for planting crops.", "color": "#8a6a4a"}}, {"data": {"id": "farmland", "label": "Farmland & Crops", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/farmland.png", "tier": "food", "desc": "Till dirt with a hoe and plant seeds/wheat to start a renewable food supply.", "color": "#6fbf4f"}}, {"data": {"id": "wheat", "label": "Wheat", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/wheat.png", "tier": "food", "desc": "Harvested from farmland. Used to craft bread, breed cows/sheep, and feed villagers.", "color": "#6fbf4f"}}, {"data": {"id": "bread", "label": "Bread", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/bread.png", "tier": "food", "desc": "3 wheat = 1 bread. A cheap, reliable food source that restores hunger.", "color": "#6fbf4f"}}, {"data": {"id": "cobblestone", "label": "Cobblestone", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/cobblestone.png", "tier": "stone", "desc": "Mine stone with a wooden pickaxe to get cobblestone. Unlocks the entire Stone Age tier.", "color": "#8f8f8f"}}, {"data": {"id": "stone_pickaxe", "label": "Stone Pickaxe", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/stone_pickaxe.png", "tier": "stone", "desc": "3 cobblestone + 2 sticks. Required to mine iron ore.", "color": "#8f8f8f"}}, {"data": {"id": "stone_axe", "label": "Stone Axe", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/stone_axe.png", "tier": "stone", "desc": "3 cobblestone + 2 sticks. Faster wood chopping than the wooden axe.", "color": "#8f8f8f"}}, {"data": {"id": "stone_sword", "label": "Stone Sword", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/stone_sword.png", "tier": "stone", "desc": "2 cobblestone + 1 stick. A stronger early-game weapon.", "color": "#8f8f8f"}}, {"data": {"id": "stone_shovel", "label": "Stone Shovel", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/stone_shovel.png", "tier": "stone", "desc": "1 cobblestone + 2 sticks. Faster digging than wood.", "color": "#8f8f8f"}}, {"data": {"id": "stone_hoe", "label": "Stone Hoe", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/stone_hoe.png", "tier": "stone", "desc": "2 cobblestone + 2 sticks. Tills farmland faster.", "color": "#8f8f8f"}}, {"data": {"id": "furnace", "label": "Furnace", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/furnace_front.png", "tier": "stone", "desc": "8 cobblestone in a ring. Smelts ores into ingots and cooks food, fueled by coal, wood or lava.", "color": "#8f8f8f"}}, {"data": {"id": "coal_ore", "label": "Coal Ore", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/coal_ore.png", "tier": "stone", "desc": "Common ore found near the surface. Mineable with any pickaxe, including wooden.", "color": "#8f8f8f"}}, {"data": {"id": "coal", "label": "Coal", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/coal.png", "tier": "stone", "desc": "Mined directly from coal ore (no smelting needed). The primary early-game fuel and torch ingredient.", "color": "#8f8f8f"}}, {"data": {"id": "torch", "label": "Torch", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/torch.png", "tier": "misc", "desc": "1 coal + 1 stick = 4 torches. Lights up areas to stop hostile mobs from spawning.", "color": "#4f7fbf"}}, {"data": {"id": "iron_ore", "label": "Iron Ore", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/iron_ore.png", "tier": "iron", "desc": "Requires a stone pickaxe or better to mine. The gateway to the Iron Age.", "color": "#d8d8d8"}}, {"data": {"id": "raw_iron", "label": "Raw Iron", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/raw_iron.png", "tier": "iron", "desc": "Dropped when mining iron ore. Must be smelted in a furnace to become usable.", "color": "#d8d8d8"}}, {"data": {"id": "iron_ingot", "label": "Iron Ingot", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/iron_ingot.png", "tier": "iron", "desc": "Raw iron smelted in a furnace with fuel. The core material of the mid-game.", "color": "#d8d8d8"}}, {"data": {"id": "iron_pickaxe", "label": "Iron Pickaxe", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/iron_pickaxe.png", "tier": "iron", "desc": "3 iron ingots + 2 sticks. Required to mine diamond, redstone, gold and lapis ore.", "color": "#d8d8d8"}}, {"data": {"id": "iron_axe", "label": "Iron Axe", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/iron_axe.png", "tier": "iron", "desc": "3 iron ingots + 2 sticks. Fast wood chopping.", "color": "#d8d8d8"}}, {"data": {"id": "iron_sword", "label": "Iron Sword", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/iron_sword.png", "tier": "iron", "desc": "2 iron ingots + 1 stick. Solid mid-game weapon.", "color": "#d8d8d8"}}, {"data": {"id": "iron_shovel", "label": "Iron Shovel", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/iron_shovel.png", "tier": "iron", "desc": "1 iron ingot + 2 sticks.", "color": "#d8d8d8"}}, {"data": {"id": "iron_hoe", "label": "Iron Hoe", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/iron_hoe.png", "tier": "iron", "desc": "2 iron ingots + 2 sticks.", "color": "#d8d8d8"}}, {"data": {"id": "iron_armor", "label": "Iron Armor Set", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/iron_chestplate.png", "tier": "iron", "desc": "24 iron ingots for a full set (helmet, chestplate, leggings, boots). Solid defensive upgrade.", "color": "#d8d8d8"}}, {"data": {"id": "shears", "label": "Shears", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/shears.png", "tier": "iron", "desc": "2 iron ingots. Harvests wool, leaves and other blocks intact, and shears sheep.", "color": "#d8d8d8"}}, {"data": {"id": "bucket", "label": "Bucket", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/bucket.png", "tier": "iron", "desc": "3 iron ingots. Carries water and lava \u2014 essential for obsidian generation and safety.", "color": "#d8d8d8"}}, {"data": {"id": "flint_and_steel", "label": "Flint and Steel", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/flint_and_steel.png", "tier": "iron", "desc": "1 iron ingot + 1 flint. Lights fires and nether portals.", "color": "#d8d8d8"}}, {"data": {"id": "gold_ore", "label": "Gold Ore", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/gold_ore.png", "tier": "gold", "desc": "Needs an iron pickaxe or better to mine on the surface (stone works in the Nether for nether gold ore).", "color": "#e8c34a"}}, {"data": {"id": "raw_gold", "label": "Raw Gold", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/raw_gold.png", "tier": "gold", "desc": "Dropped from gold ore, smelted into gold ingots.", "color": "#e8c34a"}}, {"data": {"id": "gold_ingot", "label": "Gold Ingot", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/gold_ingot.png", "tier": "gold", "desc": "Used for golden apples, powered rails, and bartering with piglins in the Nether.", "color": "#e8c34a"}}, {"data": {"id": "golden_apple", "label": "Golden Apple", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/golden_apple.png", "tier": "gold", "desc": "8 gold ingots wrapped around an apple. Grants regeneration and absorption when eaten.", "color": "#e8c34a"}}, {"data": {"id": "redstone_ore", "label": "Redstone Ore", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/redstone_ore.png", "tier": "redstone", "desc": "Mined with an iron pickaxe or better.", "color": "#c93b3b"}}, {"data": {"id": "redstone_dust", "label": "Redstone Dust", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/redstone.png", "tier": "redstone", "desc": "Powers redstone circuits, pistons, rails and comparators for automation and contraptions.", "color": "#c93b3b"}}, {"data": {"id": "lapis_ore", "label": "Lapis Lazuli Ore", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/lapis_ore.png", "tier": "misc", "desc": "Mined with an iron pickaxe or better.", "color": "#4f7fbf"}}, {"data": {"id": "lapis_lazuli", "label": "Lapis Lazuli", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/lapis_lazuli.png", "tier": "misc", "desc": "Used as the currency for enchanting items at the enchanting table.", "color": "#4f7fbf"}}, {"data": {"id": "bookshelf", "label": "Bookshelf", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/bookshelf.png", "tier": "misc", "desc": "3 books + 6 planks. Placed around an enchanting table to unlock higher-level enchantments.", "color": "#4f7fbf"}}, {"data": {"id": "book", "label": "Book", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/book.png", "tier": "misc", "desc": "3 paper + 1 leather. Needed for bookshelves and combining with tools to make enchanted books.", "color": "#4f7fbf"}}, {"data": {"id": "enchanting_table", "label": "Enchanting Table", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/enchanting_table_top.png", "tier": "diamond", "desc": "1 book + 2 diamonds + 4 obsidian. Enchants tools, weapons and armor using lapis lazuli and XP.", "color": "#5ad6d6"}}, {"data": {"id": "diamond_ore", "label": "Diamond Ore", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/diamond_ore.png", "tier": "diamond", "desc": "Found deep underground. Requires an iron pickaxe or better to mine \u2014 the main 'end-game gear' checkpoint.", "color": "#5ad6d6"}}, {"data": {"id": "diamond", "label": "Diamond Gem", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/diamond.png", "tier": "diamond", "desc": "Dropped from diamond ore. The strongest pre-Nether crafting material.", "color": "#5ad6d6"}}, {"data": {"id": "diamond_pickaxe", "label": "Diamond Pickaxe", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/diamond_pickaxe.png", "tier": "diamond", "desc": "3 diamonds + 2 sticks. The only tool that can mine obsidian and ancient debris.", "color": "#5ad6d6"}}, {"data": {"id": "diamond_axe", "label": "Diamond Axe", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/diamond_axe.png", "tier": "diamond", "desc": "3 diamonds + 2 sticks.", "color": "#5ad6d6"}}, {"data": {"id": "diamond_sword", "label": "Diamond Sword", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/diamond_sword.png", "tier": "diamond", "desc": "2 diamonds + 1 stick. Top-tier pre-netherite weapon.", "color": "#5ad6d6"}}, {"data": {"id": "diamond_shovel", "label": "Diamond Shovel", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/diamond_shovel.png", "tier": "diamond", "desc": "1 diamond + 2 sticks.", "color": "#5ad6d6"}}, {"data": {"id": "diamond_armor", "label": "Diamond Armor Set", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/diamond_chestplate.png", "tier": "diamond", "desc": "24 diamonds for a full set. Excellent protection before netherite.", "color": "#5ad6d6"}}, {"data": {"id": "obsidian", "label": "Obsidian Block", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/obsidian.png", "tier": "diamond", "desc": "Formed when flowing water touches lava (or lava touches water). Only breakable with a diamond or netherite pickaxe.", "color": "#5ad6d6"}}, {"data": {"id": "nether_portal", "label": "Nether Portal", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/nether_portal.png", "tier": "nether", "desc": "A 4x5 obsidian frame lit with flint and steel. Teleports the player into the Nether dimension.", "color": "#8a1f1f"}}, {"data": {"id": "nether_gold_ore", "label": "Nether Gold Ore", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/nether_gold_ore.png", "tier": "nether", "desc": "Found in the Nether, mineable with a stone pickaxe or better; a source of gold without going to the Overworld.", "color": "#8a1f1f"}}, {"data": {"id": "nether_wart", "label": "Nether Wart", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/nether_wart.png", "tier": "nether", "desc": "Found in Nether Fortresses. The base ingredient for almost every brewing stand potion.", "color": "#8a1f1f"}}, {"data": {"id": "brewing_stand", "label": "Brewing Stand", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/brewing_stand_base.png", "tier": "nether", "desc": "1 blaze rod + 3 cobblestone. Brews potions using nether wart and other ingredients.", "color": "#8a1f1f"}}, {"data": {"id": "potion", "label": "Potions", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/potion.png", "tier": "nether", "desc": "Crafted at a brewing stand \u2014 healing, strength, fire resistance and more support survival and boss fights.", "color": "#8a1f1f"}}, {"data": {"id": "nether_fortress", "label": "Nether Fortress", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/nether_bricks.png", "tier": "nether", "desc": "A structure found in the Nether housing blazes, wither skeletons and nether wart farms.", "color": "#8a1f1f"}}, {"data": {"id": "blaze_rod", "label": "Blaze Rod", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/blaze_rod.png", "tier": "nether", "desc": "Dropped by blazes in Nether Fortresses. Needed for brewing stands and blaze powder.", "color": "#8a1f1f"}}, {"data": {"id": "blaze_powder", "label": "Blaze Powder", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/blaze_powder.png", "tier": "nether", "desc": "Crafted from a blaze rod. Used to brew potions and to craft eyes of ender.", "color": "#8a1f1f"}}, {"data": {"id": "wither_skeleton", "label": "Wither Skeleton", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/entity/skeleton/wither_skeleton.png", "tier": "nether", "desc": "A hostile Nether Fortress mob. Has a rare chance to drop its skull when killed.", "color": "#8a1f1f"}}, {"data": {"id": "wither_skull_item", "label": "Wither Skeleton Skull", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/entity/skeleton/wither_skeleton.png", "tier": "nether", "desc": "A rare drop from wither skeletons. 3 skulls + 4 soul sand/soil summon the Wither boss.", "color": "#8a1f1f"}}, {"data": {"id": "soul_sand", "label": "Soul Sand / Soul Soil", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/soul_sand.png", "tier": "nether", "desc": "Found in the Nether. Combined with wither skulls to build a Wither boss summon structure.", "color": "#8a1f1f"}}, {"data": {"id": "wither_boss", "label": "BOSS: The Wither", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/nether_star.png", "tier": "nether", "desc": "Summoned from 3 wither skulls + 4 soul sand/soil. A powerful boss that drops a Nether Star on defeat.", "color": "#8a1f1f"}}, {"data": {"id": "nether_star", "label": "Nether Star", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/nether_star.png", "tier": "nether", "desc": "Dropped by the Wither. The core ingredient for crafting a Beacon.", "color": "#8a1f1f"}}, {"data": {"id": "beacon", "label": "Beacon", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/beacon.png", "tier": "nether", "desc": "1 nether star + 5 glass + 3 obsidian. Projects a beam that grants powerful area buffs.", "color": "#8a1f1f"}}, {"data": {"id": "blackstone", "label": "Blackstone / Basalt Deltas", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/blackstone.png", "tier": "nether", "desc": "Common Nether terrain blocks, also used for building and crafting variants like polished blackstone.", "color": "#8a1f1f"}}, {"data": {"id": "piglin", "label": "Piglins", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/gold_nugget.png", "tier": "nether", "desc": "Nether mobs that can be bartered with \u2014 give them gold ingots for random valuable loot.", "color": "#8a1f1f"}}, {"data": {"id": "bastion_remnant", "label": "Bastion Remnant", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/polished_blackstone.png", "tier": "nether", "desc": "A Nether structure guarded by piglins, containing chests with ancient debris, gold and rare loot.", "color": "#8a1f1f"}}, {"data": {"id": "ancient_debris", "label": "Ancient Debris", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/ancient_debris_side.png", "tier": "netherite", "desc": "A rare Nether ore only mineable with a diamond or netherite pickaxe. The source of netherite.", "color": "#4a4141"}}, {"data": {"id": "netherite_scrap", "label": "Netherite Scrap", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/netherite_scrap.png", "tier": "netherite", "desc": "Smelt ancient debris in a furnace to get netherite scrap.", "color": "#4a4141"}}, {"data": {"id": "netherite_ingot", "label": "Netherite Ingot", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/netherite_ingot.png", "tier": "netherite", "desc": "4 netherite scrap + 4 gold ingots. The strongest crafting material in the game.", "color": "#4a4141"}}, {"data": {"id": "smithing_template", "label": "Netherite Upgrade Template", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/netherite_upgrade_smithing_template.png", "tier": "netherite", "desc": "Found in Bastion Remnants. Required at a smithing table to upgrade diamond gear to netherite.", "color": "#4a4141"}}, {"data": {"id": "netherite_pickaxe", "label": "Netherite Gear", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/netherite_pickaxe.png", "tier": "netherite", "desc": "A diamond tool/weapon/armor + netherite ingot + template, combined at a smithing table. Fire-resistant and the best tier in the game.", "color": "#4a4141"}}, {"data": {"id": "ender_pearl", "label": "Ender Pearl", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/ender_pearl.png", "tier": "end", "desc": "Dropped by Endermen when killed. Can be thrown to teleport, and is essential for reaching the End.", "color": "#7a3fb0"}}, {"data": {"id": "eye_of_ender", "label": "Eye of Ender", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/ender_eye.png", "tier": "end", "desc": "1 ender pearl + 1 blaze powder. Used to locate strongholds and activate the End Portal.", "color": "#7a3fb0"}}, {"data": {"id": "stronghold", "label": "Stronghold", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/end_stone_bricks.png", "tier": "end", "desc": "An underground structure located by following thrown eyes of ender. Contains the End Portal room.", "color": "#7a3fb0"}}, {"data": {"id": "end_portal", "label": "End Portal", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/end_portal_frame_top.png", "tier": "end", "desc": "A ring of portal frames found in strongholds. Filled with eyes of ender to activate it and enter the End.", "color": "#7a3fb0"}}, {"data": {"id": "the_end", "label": "The End Dimension", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/end_stone.png", "tier": "end", "desc": "A barren dimension of end stone, home to the Ender Dragon on a central obsidian pillar island.", "color": "#7a3fb0"}}, {"data": {"id": "ender_dragon", "label": "BOSS: Ender Dragon", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/dragon_breath.png", "tier": "end", "desc": "The game's final boss. Destroy the healing crystals on obsidian pillars, then damage the dragon directly to defeat it.", "color": "#7a3fb0"}}, {"data": {"id": "dragon_egg", "label": "Dragon Egg", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/dragon_egg.png", "tier": "end", "desc": "Spawns once after the Ender Dragon is defeated for the first time \u2014 mostly a rare trophy block.", "color": "#7a3fb0"}}, {"data": {"id": "exp_bottle", "label": "Experience & Gateway", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/experience_bottle.png", "tier": "end", "desc": "Defeating the dragon opens an End Gateway to the outer End islands, and grants a huge burst of XP.", "color": "#7a3fb0"}}, {"data": {"id": "end_city", "label": "End City", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/purpur_block.png", "tier": "end", "desc": "A structure on the outer End islands, guarded by Shulkers, reachable via End Gateways after the dragon fight.", "color": "#7a3fb0"}}, {"data": {"id": "shulker_box", "label": "Shulker Box", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/block/shulker_box.png", "tier": "end", "desc": "Crafted from a shulker shell (dropped by Shulkers in End Cities) + a chest. A portable storage container.", "color": "#7a3fb0"}}, {"data": {"id": "elytra", "label": "Elytra", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/elytra.png", "tier": "end", "desc": "Found in an item frame on an End Ship near an End City. Wings that let the player glide through the air.", "color": "#7a3fb0"}}, {"data": {"id": "emerald", "label": "Emerald", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/emerald.png", "tier": "misc", "desc": "Found in mountain biomes or traded from villagers. The currency used for all villager trading.", "color": "#4f7fbf"}}, {"data": {"id": "village", "label": "Village & Trading", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/gold_nugget.png", "tier": "misc", "desc": "Naturally generated settlements. Trading with villagers is a shortcut to enchanted gear, food and emeralds.", "color": "#4f7fbf"}}, {"data": {"id": "heart_of_the_sea", "label": "Heart of the Sea", "image": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.20.1/assets/minecraft/textures/item/heart_of_the_sea.png", "tier": "misc", "desc": "Found in buried treasure. Combined with nautilus shells to craft a Conduit for underwater exploration.", "color": "#4f7fbf"}}], "edges": [{"data": {"source": "oak_log", "target": "oak_planks", "note": "craft"}}, {"data": {"source": "oak_planks", "target": "stick", "note": "craft"}}, {"data": {"source": "oak_planks", "target": "crafting_table", "note": "craft"}}, {"data": {"source": "crafting_table", "target": "wooden_pickaxe", "note": "craft"}}, {"data": {"source": "crafting_table", "target": "wooden_axe", "note": "craft"}}, {"data": {"source": "crafting_table", "target": "wooden_sword", "note": "craft"}}, {"data": {"source": "crafting_table", "target": "wooden_shovel", "note": "craft"}}, {"data": {"source": "crafting_table", "target": "wooden_hoe", "note": "craft"}}, {"data": {"source": "wooden_hoe", "target": "farmland", "note": "till"}}, {"data": {"source": "farmland", "target": "wheat", "note": "harvest"}}, {"data": {"source": "wheat", "target": "bread", "note": "craft"}}, {"data": {"source": "wooden_pickaxe", "target": "cobblestone", "note": "mine"}}, {"data": {"source": "cobblestone", "target": "stone_pickaxe", "note": "craft"}}, {"data": {"source": "cobblestone", "target": "stone_axe", "note": "craft"}}, {"data": {"source": "cobblestone", "target": "stone_sword", "note": "craft"}}, {"data": {"source": "cobblestone", "target": "stone_shovel", "note": "craft"}}, {"data": {"source": "cobblestone", "target": "stone_hoe", "note": "craft"}}, {"data": {"source": "cobblestone", "target": "furnace", "note": "craft"}}, {"data": {"source": "wooden_pickaxe", "target": "coal_ore", "note": "mine"}}, {"data": {"source": "coal_ore", "target": "coal", "note": "mine drop"}}, {"data": {"source": "coal", "target": "torch", "note": "craft"}}, {"data": {"source": "stone_pickaxe", "target": "iron_ore", "note": "mine"}}, {"data": {"source": "iron_ore", "target": "raw_iron", "note": "mine drop"}}, {"data": {"source": "raw_iron", "target": "iron_ingot", "note": "smelt"}}, {"data": {"source": "furnace", "target": "iron_ingot", "note": "smelt"}}, {"data": {"source": "iron_ingot", "target": "iron_pickaxe", "note": "craft"}}, {"data": {"source": "iron_ingot", "target": "iron_axe", "note": "craft"}}, {"data": {"source": "iron_ingot", "target": "iron_sword", "note": "craft"}}, {"data": {"source": "iron_ingot", "target": "iron_shovel", "note": "craft"}}, {"data": {"source": "iron_ingot", "target": "iron_hoe", "note": "craft"}}, {"data": {"source": "iron_ingot", "target": "iron_armor", "note": "craft"}}, {"data": {"source": "iron_ingot", "target": "shears", "note": "craft"}}, {"data": {"source": "iron_ingot", "target": "bucket", "note": "craft"}}, {"data": {"source": "iron_ingot", "target": "flint_and_steel", "note": "craft"}}, {"data": {"source": "iron_pickaxe", "target": "gold_ore", "note": "mine"}}, {"data": {"source": "gold_ore", "target": "raw_gold", "note": "mine drop"}}, {"data": {"source": "raw_gold", "target": "gold_ingot", "note": "smelt"}}, {"data": {"source": "gold_ingot", "target": "golden_apple", "note": "craft"}}, {"data": {"source": "iron_pickaxe", "target": "redstone_ore", "note": "mine"}}, {"data": {"source": "redstone_ore", "target": "redstone_dust", "note": "mine drop"}}, {"data": {"source": "iron_pickaxe", "target": "lapis_ore", "note": "mine"}}, {"data": {"source": "lapis_ore", "target": "lapis_lazuli", "note": "mine drop"}}, {"data": {"source": "iron_pickaxe", "target": "diamond_ore", "note": "mine"}}, {"data": {"source": "diamond_ore", "target": "diamond", "note": "mine drop"}}, {"data": {"source": "diamond", "target": "diamond_pickaxe", "note": "craft"}}, {"data": {"source": "diamond", "target": "diamond_axe", "note": "craft"}}, {"data": {"source": "diamond", "target": "diamond_sword", "note": "craft"}}, {"data": {"source": "diamond", "target": "diamond_shovel", "note": "craft"}}, {"data": {"source": "diamond", "target": "diamond_armor", "note": "craft"}}, {"data": {"source": "diamond", "target": "enchanting_table", "note": "craft"}}, {"data": {"source": "book", "target": "enchanting_table", "note": "craft"}}, {"data": {"source": "book", "target": "bookshelf", "note": "craft"}}, {"data": {"source": "bucket", "target": "obsidian", "note": "generate (water+lava)"}}, {"data": {"source": "diamond_pickaxe", "target": "obsidian", "note": "mine"}}, {"data": {"source": "obsidian", "target": "enchanting_table", "note": "craft"}}, {"data": {"source": "obsidian", "target": "nether_portal", "note": "build"}}, {"data": {"source": "flint_and_steel", "target": "nether_portal", "note": "ignite"}}, {"data": {"source": "nether_portal", "target": "nether_gold_ore", "note": "enter Nether"}}, {"data": {"source": "nether_portal", "target": "nether_fortress", "note": "enter Nether"}}, {"data": {"source": "nether_portal", "target": "soul_sand", "note": "enter Nether"}}, {"data": {"source": "nether_portal", "target": "blackstone", "note": "enter Nether"}}, {"data": {"source": "nether_portal", "target": "bastion_remnant", "note": "enter Nether"}}, {"data": {"source": "nether_portal", "target": "ancient_debris", "note": "enter Nether"}}, {"data": {"source": "nether_gold_ore", "target": "gold_ingot", "note": "mine + smelt"}}, {"data": {"source": "nether_fortress", "target": "nether_wart", "note": "find"}}, {"data": {"source": "nether_fortress", "target": "blaze_rod", "note": "kill blaze"}}, {"data": {"source": "nether_fortress", "target": "wither_skeleton", "note": "encounter"}}, {"data": {"source": "blaze_rod", "target": "blaze_powder", "note": "craft"}}, {"data": {"source": "blaze_rod", "target": "brewing_stand", "note": "craft"}}, {"data": {"source": "nether_wart", "target": "potion", "note": "brew"}}, {"data": {"source": "brewing_stand", "target": "potion", "note": "brew"}}, {"data": {"source": "wither_skeleton", "target": "wither_skull_item", "note": "rare drop"}}, {"data": {"source": "wither_skull_item", "target": "wither_boss", "note": "summon"}}, {"data": {"source": "soul_sand", "target": "wither_boss", "note": "summon"}}, {"data": {"source": "wither_boss", "target": "nether_star", "note": "defeat drop"}}, {"data": {"source": "nether_star", "target": "beacon", "note": "craft"}}, {"data": {"source": "bastion_remnant", "target": "ancient_debris", "note": "loot chest"}}, {"data": {"source": "bastion_remnant", "target": "smithing_template", "note": "loot chest"}}, {"data": {"source": "bastion_remnant", "target": "piglin", "note": "guarded by"}}, {"data": {"source": "gold_ingot", "target": "piglin", "note": "barter"}}, {"data": {"source": "diamond_pickaxe", "target": "ancient_debris", "note": "mine"}}, {"data": {"source": "ancient_debris", "target": "netherite_scrap", "note": "smelt"}}, {"data": {"source": "netherite_scrap", "target": "netherite_ingot", "note": "craft"}}, {"data": {"source": "gold_ingot", "target": "netherite_ingot", "note": "craft"}}, {"data": {"source": "netherite_ingot", "target": "netherite_pickaxe", "note": "smith upgrade"}}, {"data": {"source": "smithing_template", "target": "netherite_pickaxe", "note": "smith upgrade"}}, {"data": {"source": "diamond_pickaxe", "target": "netherite_pickaxe", "note": "smith upgrade (base gear)"}}, {"data": {"source": "blaze_powder", "target": "eye_of_ender", "note": "craft"}}, {"data": {"source": "ender_pearl", "target": "eye_of_ender", "note": "craft"}}, {"data": {"source": "eye_of_ender", "target": "stronghold", "note": "locate"}}, {"data": {"source": "stronghold", "target": "end_portal", "note": "find"}}, {"data": {"source": "eye_of_ender", "target": "end_portal", "note": "activate"}}, {"data": {"source": "end_portal", "target": "the_end", "note": "enter"}}, {"data": {"source": "the_end", "target": "ender_dragon", "note": "encounter"}}, {"data": {"source": "ender_dragon", "target": "dragon_egg", "note": "defeat reward"}}, {"data": {"source": "ender_dragon", "target": "exp_bottle", "note": "defeat reward"}}, {"data": {"source": "exp_bottle", "target": "end_city", "note": "gateway access"}}, {"data": {"source": "end_city", "target": "shulker_box", "note": "loot + craft"}}, {"data": {"source": "end_city", "target": "elytra", "note": "find (End Ship)"}}, {"data": {"source": "village", "target": "emerald", "note": "trade"}}, {"data": {"source": "emerald", "target": "village", "note": "trade"}}, {"data": {"source": "iron_ingot", "target": "village", "note": "trade for emeralds"}}, {"data": {"source": "village", "target": "golden_apple", "note": "trade (rare)"}}, {"data": {"source": "village", "target": "heart_of_the_sea", "note": "trade (rare)"}}]};
+var tierColors = {"wood": "#8a6a4a", "stone": "#8f8f8f", "iron": "#d8d8d8", "gold": "#e8c34a", "redstone": "#c93b3b", "diamond": "#5ad6d6", "nether": "#8a1f1f", "end": "#7a3fb0", "netherite": "#4a4141", "food": "#6fbf4f", "misc": "#4f7fbf"};
+var tierLabels = {"wood": "Wood Age", "stone": "Stone Age", "iron": "Iron Age", "gold": "Gold", "redstone": "Redstone", "diamond": "Diamond", "nether": "The Nether", "end": "The End", "netherite": "Netherite", "food": "Food & Farming", "misc": "Misc / Trading"};
+
+var byId = {};
+graphData.nodes.forEach(function(n){ byId[n.data.id] = n.data; });
+
+var cy = cytoscape({
+  container: document.getElementById('cy'),
+  elements: graphData,
+  boxSelectionEnabled: false,
+  autoungrabify: true,
+  style: [
+    {
+      selector: 'node',
+      style: {
+        'shape': 'round-rectangle',
+        'background-color': '#161616',
+        'background-opacity': 1,
+        'border-width': 2,
+        'border-color': 'data(color)',
+        'border-opacity': 0.5,
+        'background-image': 'data(image)',
+        'background-fit': 'contain',
+        'background-clip': 'none',
+        'width': 40,
+        'height': 40,
+        'label': 'data(label)',
+        'color': '#999999',
+        'text-valign': 'bottom',
+        'text-margin-y': 7,
+        'font-family': 'VT323, monospace',
+        'font-size': '13px',
+        'text-outline-color': '#0a0a0a',
+        'text-outline-width': 3,
+        'transition-property': 'width, height, color, opacity, border-color, border-width',
+        'transition-duration': '0.15s'
+      }
+    },
+    { selector: 'edge', style: {
+        'width': 1.4, 'line-color': '#2a2a2a', 'target-arrow-color': '#2a2a2a',
+        'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'arrow-scale': 0.7,
+        'transition-property': 'line-color, target-arrow-color, width, opacity',
+        'transition-duration': '0.15s'
+    }},
+    { selector: 'node.highlighted', style: { 'width': 56, 'height': 56, 'color': '#ffffff', 'border-width': 3, 'border-opacity': 1, 'opacity': 1 } },
+    { selector: 'node.selected', style: { 'width': 60, 'height': 60, 'color': '#ffffff', 'border-width': 4, 'border-color': 'data(color)', 'border-opacity': 1 } },
+    { selector: 'node.dimmed', style: { 'opacity': 0.12, 'color': '#333333' } },
+    { selector: 'edge.highlighted', style: { 'width': 2.5, 'line-color': '#e8b34a', 'target-arrow-color': '#e8b34a', 'opacity': 1 } },
+    { selector: 'edge.dimmed', style: { 'opacity': 0.04 } },
+    { selector: 'node.tier-off', style: { 'display': 'none' } }
+  ],
+  layout: { name: 'dagre', rankDir: 'LR', nodeSep: 42, rankSep: 105 }
+});
+
+var pane = document.getElementById('details-pane');
+var paneTitle = document.getElementById('pane-title');
+var paneImg = document.getElementById('pane-img');
+var paneDesc = document.getElementById('pane-desc');
+var paneTier = document.getElementById('pane-tier');
+var paneIncoming = document.getElementById('pane-incoming');
+var paneOutgoing = document.getElementById('pane-outgoing');
+var pinned = null;
+
+function edgeNote(edge){
+  var n = edge.data('note');
+  return n ? ' <span style="color:#555">(' + n + ')</span>' : '';
+}
+
+function renderPane(node){
+  var d = node.data();
+  paneTitle.innerText = d.label;
+  paneImg.src = d.image;
+  paneTier.innerText = tierLabels[d.tier] || d.tier;
+  paneTier.style.background = tierColors[d.tier] || '#888';
+  paneDesc.innerText = d.desc || '';
+
+  var incoming = node.incomers('edge');
+  var outgoing = node.outgoers('edge');
+
+  paneIncoming.innerHTML = incoming.length ? incoming.map(function(e){
+    var src = byId[e.data('source')];
+    return '<div><span class="arrow">&#8592;</span>' + src.label + edgeNote(e) + '</div>';
+  }).join('') : '<div style="color:#555">Base resource</div>';
+
+  paneOutgoing.innerHTML = outgoing.length ? outgoing.map(function(e){
+    var tgt = byId[e.data('target')];
+    return '<div><span class="arrow">&#8594;</span>' + tgt.label + edgeNote(e) + '</div>';
+  }).join('') : '<div style="color:#555">End of this path</div>';
+
+  pane.classList.add('active');
+}
+
+function highlightNode(node){
+  var neighborhood = node.closedNeighborhood();
+  cy.elements().addClass('dimmed').removeClass('highlighted');
+  neighborhood.removeClass('dimmed').addClass('highlighted');
+}
+
+function clearHighlight(){
+  cy.elements().removeClass('dimmed highlighted');
+}
+
+cy.on('tap', 'node', function(e){
+  var node = e.target;
+  pinned = node;
+  cy.nodes().removeClass('selected');
+  node.addClass('selected');
+  highlightNode(node);
+  renderPane(node);
+});
+
+cy.on('mouseover', 'node', function(e){
+  if (pinned) return;
+  highlightNode(e.target);
+  renderPane(e.target);
+});
+cy.on('mouseout', 'node', function(){
+  if (pinned) return;
+  clearHighlight();
+  pane.classList.remove('active');
+});
+
+cy.on('tap', function(e){
+  if (e.target === cy){
+    pinned = null;
+    cy.nodes().removeClass('selected');
+    clearHighlight();
+    pane.classList.remove('active');
+  }
+});
+
+document.getElementById('pane-close').addEventListener('click', function(){
+  pinned = null;
+  cy.nodes().removeClass('selected');
+  clearHighlight();
+  pane.classList.remove('active');
+});
+
+document.getElementById('fit-btn').addEventListener('click', function(){ cy.fit(undefined, 50); });
+document.getElementById('layout-dagre-btn').addEventListener('click', function(){
+  cy.layout({ name: 'dagre', rankDir: 'LR', nodeSep: 42, rankSep: 105, animate: true, animationDuration: 450 }).run();
+});
+document.getElementById('layout-cose-btn').addEventListener('click', function(){
+  cy.layout({ name: 'cose', animate: true, animationDuration: 450 }).run();
+});
+
+// legend + tier filtering
+var legendEl = document.getElementById('legend');
+var offTiers = {};
+Object.keys(tierColors).forEach(function(tier){
+  var item = document.createElement('div');
+  item.className = 'legend-item';
+  item.dataset.tier = tier;
+  item.innerHTML = '<span class="swatch" style="background:' + tierColors[tier] + '"></span>' + tierLabels[tier];
+  item.addEventListener('click', function(){
+    offTiers[tier] = !offTiers[tier];
+    item.classList.toggle('off', offTiers[tier]);
+    cy.nodes('[tier = "' + tier + '"]').toggleClass('tier-off', offTiers[tier]);
+  });
+  legendEl.appendChild(item);
+});
+
+// search
+var searchInput = document.getElementById('search-input');
+searchInput.addEventListener('input', function(){
+  var q = this.value.trim().toLowerCase();
+  cy.nodes().removeClass('highlighted').removeClass('dimmed');
+  if (!q){ return; }
+  var matches = cy.nodes().filter(function(n){
+    return n.data('label').toLowerCase().indexOf(q) !== -1;
+  });
+  if (matches.length){
+    cy.elements().addClass('dimmed');
+    matches.removeClass('dimmed').addClass('highlighted');
+  }
+});
+
+// ---- lively idle motion: nodes drift like floating Minecraft item drops ----
+function hashCode(str){
+  var h = 0;
+  for (var i = 0; i < str.length; i++){ h = (h * 31 + str.charCodeAt(i)) | 0; }
+  return Math.abs(h);
+}
+
+var basePositions = {};
+var seeds = {};
+function captureBase(){
+  cy.nodes().forEach(function(n){
+    basePositions[n.id()] = { x: n.position('x'), y: n.position('y') };
+    if (!seeds[n.id()]) seeds[n.id()] = hashCode(n.id());
+  });
+}
+captureBase();
+cy.on('layoutstop', captureBase);
+
+var animStart = Date.now();
+function driftLoop(){
+  var t = (Date.now() - animStart) / 1000;
+  cy.startBatch();
+  cy.nodes().forEach(function(n){
+    var base = basePositions[n.id()];
+    if (!base) return;
+    var seed = seeds[n.id()] || 1;
+    var ampY = 2.2 + (seed % 5) * 0.6;
+    var ampX = 1.2 + (seed % 3) * 0.5;
+    var speedY = 0.35 + (seed % 7) / 22;
+    var speedX = 0.22 + (seed % 5) / 26;
+    var phase = (seed % 628) / 100;
+    var dy = Math.sin(t * speedY + phase) * ampY + Math.sin(t * speedY * 2.3 + phase) * (ampY * 0.25);
+    var dx = Math.cos(t * speedX + phase * 1.7) * ampX;
+    n.position({ x: base.x + dx, y: base.y + dy });
+  });
+  cy.endBatch();
+  requestAnimationFrame(driftLoop);
+}
+requestAnimationFrame(driftLoop);
+</script>
+</body>
+</html>
