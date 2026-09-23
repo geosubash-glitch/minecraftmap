@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
 <title>Minecraft Progression Map</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,25 +13,49 @@
 <style>
   * { box-sizing: border-box; }
   :root {
-    --bg: #0a0a0c;
-    --panel: #15161a;
-    --panel-2: #1b1c21;
-    --border: #2c2d33;
-    --border-hover: #45474f;
-    --text: #eaeaec;
-    --text-dim: #9a9aa2;
-    --text-faint: #5c5d64;
-    --accent: #ff9f43;
-    --accent-2: #4ade80;
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
+    /* Apple-style dark "material" palette -- translucent panel fills meant to
+       sit over blur() rather than flat opaque cards, hairline (low-opacity
+       white) separators instead of solid borders, and a systemOrange/systemGreen
+       accent pairing close to iOS/macOS dark mode. */
+    --bg: #000000;
+    --panel-fill: rgba(30, 30, 32, 0.72);
+    --panel-fill-solid: #1c1c1e;
+    --hairline: rgba(255,255,255,0.11);
+    --hairline-strong: rgba(255,255,255,0.22);
+    --text: rgba(255,255,255,0.92);
+    --text-dim: rgba(255,255,255,0.55);
+    --text-faint: rgba(255,255,255,0.35);
+    --accent: #ff9f0a;
+    --accent-2: #32d74b;
+
+    /* ---- concentric corner-radius scale ----
+       A fixed set of radii, each roughly nested inside the one above it. Per
+       Apple's HIG, when a rounded element sits inside another rounded
+       element, the *inner* radius should equal the *outer* radius minus the
+       gap between their edges, so both curves are struck from the same
+       center point instead of the inner shape looking arbitrarily rounded
+       against the outer one. Every component below picks its own radius as
+       (its container's radius − its own inset from that container), clamped
+       to --r-0 as a floor so small chips never go perfectly square by accident.
+       --r-3 (details-pane, timeline-panel, branch-modal close button's
+       parent context) is the largest "sheet" radius; each step down is used
+       by whatever sits at a smaller, more deeply-nested inset. */
+    --r-3: 20px;  /* outer sheets: details-pane, timeline-panel */
+    --r-2: 14px;  /* primary controls: search-box, menu-button, legend, .btn, branch-modal close-btn */
+    --r-1: 10px;  /* secondary containers: menu-dropdown */
+    --r-0: 6px;   /* small nested chips: menu-item (r-1 10px − 4px inset), tl-num, pane image frame */
+    --radius-sm: var(--r-0);
+    --radius-md: var(--r-1);
+    --radius-lg: var(--r-2);
+
     --ctrl-h: 36px;
-    --shadow-panel: 0 14px 34px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35);
-    --font-ui: 'Reddit Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --font-mono: 'Fira Code', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+    --shadow-panel: 0 12px 28px rgba(0,0,0,0.45), 0 1px 3px rgba(0,0,0,0.3);
+    --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Reddit Sans', 'Segoe UI', sans-serif;
+    --font-mono: ui-monospace, 'SF Mono', 'SFMono-Regular', 'Fira Code', Menlo, Consolas, monospace;
+    --ease-apple: cubic-bezier(0.25, 0.1, 0.25, 1);
   }
-  html, body { height: 100%; }
+  html, body { height: 100%; overscroll-behavior: none; }
+  :root { --safe-top: env(safe-area-inset-top, 0px); --safe-bottom: env(safe-area-inset-bottom, 0px); --safe-left: env(safe-area-inset-left, 0px); --safe-right: env(safe-area-inset-right, 0px); }
   body {
     /* the map reads like a small island of nodes floating in a dark void:
        a broad, soft dark ellipse pools like a shadow beneath it on the
@@ -44,20 +69,21 @@
     text-rendering: optimizeLegibility;
     color: var(--text); overflow: hidden;
   }
-  #cy { width: 100vw; height: 100vh; display: block; }
+  #cy { width: 100vw; height: 100vh; display: block; touch-action: none; }
 
   /* thin, dark, unobtrusive scrollbars on every scrollable panel */
   #details-pane-scroll::-webkit-scrollbar, #timeline-scroll::-webkit-scrollbar { width: 8px; }
   #details-pane-scroll::-webkit-scrollbar-track, #timeline-scroll::-webkit-scrollbar-track { background: transparent; }
   #details-pane-scroll::-webkit-scrollbar-thumb, #timeline-scroll::-webkit-scrollbar-thumb {
-    background: var(--border); border-radius: 4px;
+    background: var(--hairline-strong); border-radius: 4px;
   }
-  #details-pane-scroll::-webkit-scrollbar-thumb:hover, #timeline-scroll::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+  #details-pane-scroll::-webkit-scrollbar-thumb:hover, #timeline-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.32); }
 
   #top-bar {
     position: absolute; top: 0; left: 0; right: 0;
     display: flex; justify-content: space-between; align-items: center;
-    padding: 16px 18px;
+    flex-wrap: wrap; gap: 8px 10px;
+    padding: calc(12px + var(--safe-top)) calc(14px + var(--safe-right)) 12px calc(14px + var(--safe-left));
     pointer-events: none;
     background: linear-gradient(to bottom, rgba(6,6,8,0.75) 0%, rgba(6,6,8,0.0) 100%);
   }
@@ -74,23 +100,44 @@
 
   #search-box {
     pointer-events: auto;
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: var(--radius-md); height: var(--ctrl-h); padding: 0 14px;
+    background: var(--panel-fill); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 0.5px solid var(--hairline);
+    border-radius: var(--r-2); height: var(--ctrl-h); padding: 0 14px;
     display: flex; align-items: center; gap: 9px;
     box-shadow: var(--shadow-panel);
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    transition: border-color 0.2s var(--ease-apple), box-shadow 0.2s var(--ease-apple);
   }
-  #search-box:focus-within { border-color: var(--accent); box-shadow: var(--shadow-panel), 0 0 0 3px rgba(255,159,67,0.14); }
-  #search-box .search-icon { color: var(--text-faint); font-size: 14px; line-height: 1; }
+  #search-box:focus-within { border-color: var(--accent); box-shadow: var(--shadow-panel), 0 0 0 3px rgba(255,159,10,0.18); }
+  #search-box .search-icon {
+    color: var(--text-faint); flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px;
+  }
+  #search-box .search-icon svg { display: block; width: 100%; height: 100%; }
   #search-box input {
     background: transparent; border: none; outline: none; color: var(--text);
     font-family: var(--font-ui); font-weight: 600; font-size: 13px; width: 190px;
+    line-height: normal; padding: 0; margin: 0; height: 100%;
   }
   #search-box input::placeholder { color: var(--text-faint); }
 
+  @media (max-width: 640px) {
+    #details-pane, #timeline-panel { width: auto; left: calc(14px + var(--safe-left)); right: calc(14px + var(--safe-right)); }
+    #timeline-panel { max-height: 60vh; }
+    #details-pane { max-height: 60vh; }
+    #details-pane-scroll, #timeline-scroll { max-height: 60vh; }
+  }
   @media (max-width: 520px) {
-    #search-box input { width: 120px; }
-    #title-box h1 { font-size: 16px; }
+    #search-box input { width: 96px; }
+    #title-box h1 { font-size: 15px; }
+    #title-box .subtitle { display: none; }
+    #top-right-controls { gap: 7px; }
+  }
+  /* on touch devices, keep every tappable control at Apple's ~44px minimum
+     hit-target guidance even though the visual chip stays compact */
+  @media (pointer: coarse) {
+    #menu-button, #search-box, .btn, #legend { min-height: 44px; }
+    #details-pane .close-btn, #timeline-panel .close-btn, #branch-modal-header .close-btn { width: 30px; height: 30px; }
   }
 
   #top-right-controls {
@@ -101,138 +148,168 @@
 
   #menu-button {
     position: relative;
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: var(--radius-md); width: var(--ctrl-h); height: var(--ctrl-h);
+    background: var(--panel-fill); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 0.5px solid var(--hairline);
+    border-radius: var(--r-2); width: var(--ctrl-h); height: var(--ctrl-h);
     display: flex; align-items: center; justify-content: center;
     box-shadow: var(--shadow-panel); cursor: pointer;
-    transition: border-color 0.15s ease, background 0.12s ease;
+    transition: border-color 0.2s var(--ease-apple), background 0.2s var(--ease-apple), transform 0.15s var(--ease-apple);
   }
-  #menu-button:hover { border-color: var(--border-hover); background: var(--panel-2); }
+  #menu-button:hover { border-color: var(--hairline-strong); background: rgba(44,44,46,0.78); }
+  #menu-button:active { transform: scale(0.94); }
   #menu-button.active { border-color: var(--accent); color: var(--accent); }
   #menu-button .menu-icon { font-size: 15px; color: var(--text-dim); line-height: 1; }
   #menu-button.active .menu-icon { color: var(--accent); }
 
   #menu-dropdown {
-    position: absolute; top: calc(100% + 10px); right: 0; min-width: 190px;
-    background: linear-gradient(180deg, var(--panel-2) 0%, var(--panel) 100%);
-    border: 1px solid var(--border); border-radius: var(--radius-md);
+    position: absolute; top: calc(100% + 8px); right: 0; min-width: 190px;
+    background: var(--panel-fill); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 0.5px solid var(--hairline); border-radius: var(--r-1); /* r-1 = 10px, this dropdown's own outer radius */
     box-shadow: var(--shadow-panel); padding: 6px;
-    opacity: 0; transform: translateY(-4px); pointer-events: none;
-    transition: opacity 0.15s ease, transform 0.15s ease;
+    opacity: 0; transform: translateY(-4px) scale(0.98); pointer-events: none;
+    transition: opacity 0.18s var(--ease-apple), transform 0.18s var(--ease-apple);
     z-index: 1002;
   }
-  #menu-dropdown.active { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  #menu-dropdown.active { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
   #menu-dropdown .menu-item {
-    padding: 8px 10px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500;
-    color: var(--text-dim); cursor: pointer; transition: background 0.12s ease, color 0.12s ease;
+    /* concentric with the dropdown's own rounding: inner radius = outer
+       radius (--r-1, 10px) minus the dropdown's 6px inner padding = --r-0 (6px... 
+       clamped down to 4px here since the item is itself quite short) so both
+       corners are struck from the same center rather than the item's curve
+       reading as arbitrary against the panel's curve. */
+    padding: 9px 11px; border-radius: 4px; font-size: 13px; font-weight: 500;
+    color: var(--text-dim); cursor: pointer; transition: background 0.15s var(--ease-apple), color 0.15s var(--ease-apple);
   }
-  #menu-dropdown .menu-item:hover { background: rgba(255,255,255,0.06); color: var(--text); }
-  #menu-dropdown .menu-divider { height: 1px; background: var(--border); margin: 6px 4px; }
+  #menu-dropdown .menu-item:hover, #menu-dropdown .menu-item:active { background: rgba(255,255,255,0.08); color: var(--text); }
+  #menu-dropdown .menu-divider { height: 0.5px; background: var(--hairline); margin: 6px 4px; }
   #menu-dropdown .menu-credit {
-    padding: 7px 10px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em;
+    padding: 7px 11px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em;
     color: var(--text-faint); text-transform: uppercase;
   }
+  #menu-dropdown .menu-credit-link {
+    display: inline; vertical-align: baseline; font: inherit; letter-spacing: inherit;
+    color: var(--text-faint); text-decoration: underline; text-decoration-color: var(--hairline-strong);
+    text-underline-offset: 2px; text-decoration-thickness: 0.5px;
+    transition: color 0.15s var(--ease-apple), text-decoration-color 0.15s var(--ease-apple);
+  }
+  #menu-dropdown .menu-credit-link:hover,
+  #menu-dropdown .menu-credit-link:focus-visible { color: var(--accent); text-decoration-color: var(--accent); }
 
   #details-pane {
-    position: absolute; top: 78px; right: 14px; width: 300px;
-    background: linear-gradient(180deg, var(--panel-2) 0%, var(--panel) 100%);
-    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    position: absolute; top: calc(78px + var(--safe-top)); right: calc(14px + var(--safe-right)); width: 300px;
+    max-width: calc(100vw - 28px - var(--safe-left) - var(--safe-right));
+    background: var(--panel-fill); backdrop-filter: blur(28px) saturate(180%); -webkit-backdrop-filter: blur(28px) saturate(180%);
+    border: 0.5px solid var(--hairline); border-radius: var(--r-3); /* r-3 = 20px, this is the largest "sheet" in the UI */
     box-shadow: var(--shadow-panel);
-    opacity: 0; transform: translateY(-4px); pointer-events: none;
-    transition: opacity 0.18s ease, transform 0.18s ease;
+    opacity: 0; transform: translateY(-6px) scale(0.98); pointer-events: none;
+    transition: opacity 0.22s var(--ease-apple), transform 0.22s var(--ease-apple);
     max-height: 70vh; overflow: hidden;
     z-index: 1001;
   }
-  #details-pane-scroll { padding: 18px 20px; max-height: 70vh; overflow-y: auto; }
-  #details-pane.active { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  #details-pane-scroll { padding: 20px 20px; max-height: 70vh; overflow-y: auto; }
+  #details-pane.active { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
   #details-pane .pane-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
   #details-pane img {
+    /* pane image frame: inset ~10px from the pane's r-3 (20px) rounded
+       corner region, so it takes --r-0 (6px) rather than an unrelated value */
     width: 44px; height: 44px; image-rendering: pixelated; flex-shrink: 0;
-    background: #0d0d10; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px;
+    background: rgba(255,255,255,0.05); border: 0.5px solid var(--hairline); border-radius: var(--r-0); padding: 4px;
   }
-  #details-pane h3 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -0.005em; }
+  #details-pane h3 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
   #details-pane .tier-tag {
     display: inline-block; margin-top: 5px; font-size: 10.5px;
-    letter-spacing: 0.03em; padding: 2px 9px; border-radius: 999px; color: #0d0d0d; font-weight: 700;
+    letter-spacing: 0.02em; padding: 2px 9px; border-radius: 999px; color: #0d0d0d; font-weight: 600;
   }
-  #details-pane p.desc { font-size: 13.5px; line-height: 1.55; color: var(--text-dim); margin: 12px 0 12px; }
+  #details-pane p.desc { font-size: 13.5px; line-height: 1.5; color: var(--text-dim); margin: 12px 0 12px; }
   #details-pane .rel-title {
-    font-size: 10.5px; font-weight: 700; letter-spacing: 0.07em; color: var(--text-faint); margin: 12px 0 5px;
-    text-transform: uppercase; border-top: 1px solid var(--border); padding-top: 11px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; color: var(--text-faint); margin: 12px 0 5px;
+    text-transform: uppercase; border-top: 0.5px solid var(--hairline); padding-top: 11px;
   }
-  #details-pane .rel-list { font-size: 13px; line-height: 1.55; color: #b7b7bd; }
-  #details-pane .rel-list span.arrow { margin-right: 5px; font-weight: 700; }
+  #details-pane .rel-list { font-size: 13px; line-height: 1.5; color: rgba(255,255,255,0.72); }
+  #details-pane .rel-list span.arrow { margin-right: 5px; font-weight: 600; }
   #details-pane .rel-list span.arrow.req { color: var(--accent); }
   #details-pane .rel-list span.arrow.unlock { color: var(--accent-2); }
-  #details-pane .dbl-hint { font-size: 11.5px; color: var(--text-faint); margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+  #details-pane .dbl-hint { font-size: 11.5px; color: var(--text-faint); margin-top: 14px; border-top: 0.5px solid var(--hairline); padding-top: 10px; }
   #details-pane .close-btn, #timeline-panel .close-btn {
-    position: absolute; top: 12px; right: 12px; cursor: pointer; color: var(--text-faint); font-size: 16px;
+    /* close button: inset 12px from the pane's r-3 (20px) top-right corner,
+       so its own radius is r-3 − 12px = 8px, keeping both curves concentric */
+    position: absolute; top: 12px; right: 12px; cursor: pointer; color: var(--text-faint); font-size: 15px;
     pointer-events: auto; font-family: var(--font-ui); font-weight: 500; line-height: 1;
-    width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
-    border-radius: var(--radius-sm); transition: color 0.12s ease, background 0.12s ease;
+    width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+    border-radius: 8px; background: rgba(255,255,255,0.06);
+    transition: color 0.15s var(--ease-apple), background 0.15s var(--ease-apple), transform 0.12s var(--ease-apple);
   }
-  #details-pane .close-btn:hover, #timeline-panel .close-btn:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+  #details-pane .close-btn:hover, #timeline-panel .close-btn:hover { color: var(--text); background: rgba(255,255,255,0.12); }
+  #details-pane .close-btn:active, #timeline-panel .close-btn:active { transform: scale(0.9); }
 
   #timeline-panel {
-    position: absolute; top: 78px; left: 14px; width: 280px;
-    background: linear-gradient(180deg, var(--panel-2) 0%, var(--panel) 100%);
-    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    position: absolute; top: calc(78px + var(--safe-top)); left: calc(14px + var(--safe-left)); width: 280px;
+    max-width: calc(100vw - 28px - var(--safe-left) - var(--safe-right));
+    background: var(--panel-fill); backdrop-filter: blur(28px) saturate(180%); -webkit-backdrop-filter: blur(28px) saturate(180%);
+    border: 0.5px solid var(--hairline); border-radius: var(--r-3);
     box-shadow: var(--shadow-panel);
-    opacity: 0; transform: translateY(-4px); pointer-events: none;
-    transition: opacity 0.18s ease, transform 0.18s ease;
+    opacity: 0; transform: translateY(-6px) scale(0.98); pointer-events: none;
+    transition: opacity 0.22s var(--ease-apple), transform 0.22s var(--ease-apple);
     max-height: 76vh; overflow: hidden;
     z-index: 1001;
   }
-  #timeline-scroll { padding: 16px 18px; max-height: 76vh; overflow-y: auto; }
-  #timeline-panel.active { opacity: 1; transform: translateY(0); pointer-events: auto; }
-  #timeline-panel h4 { margin: 0 0 12px; font-size: 14.5px; font-weight: 700; color: var(--accent); letter-spacing: -0.005em; }
-  .tl-step { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px dashed var(--border); }
+  #timeline-scroll { padding: 18px 20px; max-height: 76vh; overflow-y: auto; }
+  #timeline-panel.active { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  #timeline-panel h4 { margin: 0 0 12px; font-size: 14.5px; font-weight: 600; color: var(--accent); letter-spacing: -0.01em; }
+  .tl-step { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 0.5px solid var(--hairline); }
   .tl-step:last-child { border-bottom: none; }
   .tl-step .tl-num {
-    width: 19px; height: 19px; flex-shrink: 0; border-radius: 50%; background: var(--panel-2); border: 1px solid var(--border);
+    /* concentric with the pane's r-3 (20px) sheet radius only in spirit --
+       this is a circle (border-radius:50%), the natural limit of the scale,
+       so it always shares the same curvature family as every other radius here */
+    width: 19px; height: 19px; flex-shrink: 0; border-radius: 50%; background: rgba(255,255,255,0.07); border: 0.5px solid var(--hairline);
     display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; color: var(--text-dim);
   }
   .tl-step img { width: 26px; height: 26px; image-rendering: pixelated; flex-shrink: 0; }
-  .tl-step .tl-label { font-size: 13px; font-weight: 500; color: #ccc; }
+  .tl-step .tl-label { font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.82); }
   .tl-step.tl-target .tl-label { color: var(--accent); font-weight: 600; }
 
 
   #legend {
-    position: absolute; bottom: 18px; right: 14px;
-    background: linear-gradient(180deg, var(--panel-2) 0%, var(--panel) 100%);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md); height: var(--ctrl-h); padding: 0 14px;
+    position: absolute; bottom: calc(18px + var(--safe-bottom)); right: calc(14px + var(--safe-right));
+    max-width: calc(100vw - 28px - var(--safe-left) - var(--safe-right));
+    background: var(--panel-fill); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 0.5px solid var(--hairline);
+    border-radius: var(--r-2); height: var(--ctrl-h); padding: 0 14px;
     display: flex; align-items: center;
     box-shadow: var(--shadow-panel);
     font-size: 13px; font-weight: 600; font-family: var(--font-ui);
     max-height: var(--ctrl-h); overflow: hidden; cursor: pointer;
-    transition: max-height 0.2s ease, height 0.2s ease, padding 0.2s ease;
+    transition: max-height 0.25s var(--ease-apple), height 0.25s var(--ease-apple), padding 0.25s var(--ease-apple), border-radius 0.25s var(--ease-apple);
   }
   #legend-grid { display: none; grid-template-columns: 1fr 1fr; gap: 6px 18px; padding: 10px 0 3px; font-weight: 500; }
   #legend-header {
-    font-size: 13px; font-weight: 600; letter-spacing: 0.005em;
+    font-size: 13px; font-weight: 600; letter-spacing: 0;
     color: var(--text); white-space: nowrap;
   }
   /* resting state is a compact "Tiers" tab the same height as the Fit View
-     button; hovering it reopens the full tier list on demand */
-  #legend:hover { max-height: 420px; height: auto; padding: 11px 15px; align-items: flex-start; display: block; }
+     button; hovering it reopens the full tier list on demand. Its radius
+     grows to --r-3 (20px) to match a "sheet" once expanded, since it's no
+     longer a small capsule control at that size. */
+  #legend:hover { max-height: 420px; height: auto; padding: 12px 16px; align-items: flex-start; display: block; border-radius: var(--r-3); }
   #legend:hover #legend-grid { display: grid; }
   #legend:hover #legend-header { display: none; }
-  .legend-item { display: flex; align-items: center; gap: 7px; color: var(--text-dim); cursor: pointer; user-select: none; transition: opacity 0.12s ease, color 0.12s ease; }
+  .legend-item { display: flex; align-items: center; gap: 7px; color: var(--text-dim); cursor: pointer; user-select: none; transition: opacity 0.15s var(--ease-apple), color 0.15s var(--ease-apple); }
   .legend-item:hover { color: var(--text); }
   .legend-item .swatch { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
 
-  .controls { position: absolute; bottom: 18px; left: 14px; display: flex; gap: 8px; }
+  .controls { position: absolute; bottom: calc(18px + var(--safe-bottom)); left: calc(14px + var(--safe-left)); display: flex; gap: 8px; }
   .btn {
-    background: var(--panel); border: 1px solid var(--border); color: var(--text);
-    height: var(--ctrl-h); padding: 0 16px; border-radius: var(--radius-md); font-size: 13px; cursor: pointer;
-    font-family: var(--font-ui); font-weight: 600; letter-spacing: 0.005em;
+    background: var(--panel-fill); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 0.5px solid var(--hairline); color: var(--text);
+    height: var(--ctrl-h); padding: 0 16px; border-radius: var(--r-2); font-size: 13px; cursor: pointer;
+    font-family: var(--font-ui); font-weight: 600; letter-spacing: 0;
     display: flex; align-items: center; justify-content: center;
     box-shadow: var(--shadow-panel);
-    transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+    transition: background 0.15s var(--ease-apple), border-color 0.15s var(--ease-apple), transform 0.12s var(--ease-apple);
   }
-  .btn:hover { background: var(--panel-2); border-color: var(--border-hover); transform: translateY(-1px); }
-  .btn:active { transform: translateY(0); }
+  .btn:hover { background: rgba(44,44,46,0.78); border-color: var(--hairline-strong); }
+  .btn:active { transform: scale(0.96); }
 
   #branch-modal {
     position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: var(--bg); z-index: 1000;
@@ -240,20 +317,27 @@
   }
   #branch-modal.active { display: flex; }
   #branch-modal-header {
-    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
-    padding: 16px 22px; background: var(--panel); border-bottom: 1px solid var(--border);
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    padding: calc(14px + var(--safe-top)) calc(20px + var(--safe-right)) 14px calc(20px + var(--safe-left));
+    background: var(--panel-fill); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border-bottom: 0.5px solid var(--hairline);
     box-shadow: 0 4px 16px rgba(0,0,0,0.4);
     flex-shrink: 0;
   }
-  #branch-modal-header h2 { margin: 0 0 6px; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; color: var(--accent); }
+  #branch-modal-header h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; color: var(--accent); }
   #branch-modal-desc { margin: 0; font-size: 13px; font-weight: 500; color: var(--text-dim); max-width: 640px; line-height: 1.5; }
   #branch-modal-header .close-btn {
-    cursor: pointer; font-size: 20px; color: var(--text-dim); font-family: var(--font-ui); font-weight: 500; flex-shrink: 0;
-    border: 1px solid var(--border); border-radius: var(--radius-md); width: 36px; height: 36px;
+    /* r-2 (14px) is this button's own outer radius here -- it sits in the
+       header bar rather than nested inside a smaller-radius sheet, so it
+       uses the primary-control radius directly rather than a derived one */
+    cursor: pointer; font-size: 19px; color: var(--text-dim); font-family: var(--font-ui); font-weight: 500; flex-shrink: 0;
+    border: 0.5px solid var(--hairline); border-radius: var(--r-2); width: 36px; height: 36px;
     display: flex; align-items: center; justify-content: center;
-    transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+    background: rgba(255,255,255,0.05);
+    transition: color 0.15s var(--ease-apple), border-color 0.15s var(--ease-apple), background 0.15s var(--ease-apple), transform 0.12s var(--ease-apple);
   }
-  #branch-modal-header .close-btn:hover { color: var(--text); border-color: var(--border-hover); background: rgba(255,255,255,0.05); }
+  #branch-modal-header .close-btn:hover { color: var(--text); border-color: var(--hairline-strong); background: rgba(255,255,255,0.1); }
+  #branch-modal-header .close-btn:active { transform: scale(0.92); }
   #branch-cy { flex: 1; position: relative; min-height: 0; }
 </style>
 </head>
@@ -267,17 +351,16 @@
     </div>
     <div id="top-right-controls">
       <div id="search-box">
-        <span class="search-icon">&#8981;</span>
+        <span class="search-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
         <input id="search-input" type="text" placeholder="search..." />
       </div>
       <div id="menu-button" title="Menu">
         <span class="menu-icon">&#9776;</span>
       </div>
       <div id="menu-dropdown">
-        <div class="menu-item" id="menu-option-1">Option 1</div>
-        <div class="menu-item" id="menu-option-2">Option 2</div>
+        <div class="menu-item" id="menu-option-1">Default View</div>
         <div class="menu-divider"></div>
-        <div class="menu-credit">Made by Geo, Rishav &amp; Adwaith</div>
+        <div class="menu-credit">Made by <a href="https://www.behance.net/geosubash" target="_blank" rel="noopener noreferrer" class="menu-credit-link">Geo</a>, Rishav &amp; Adwaith</div>
       </div>
     </div>
   </div>
@@ -522,7 +605,11 @@ var cy = cytoscape({
     {
       selector: 'node',
       style: {
-        'shape': 'round-rectangle',
+        /* textured nodes keep a square, un-filleted border -- 'rectangle'
+           draws sharp corners, unlike 'round-rectangle' which drew a
+           rounded fillet around the item icon. Simple-node mode overrides
+           this to 'ellipse' below, so that mode is unaffected. */
+        'shape': 'rectangle',
         'background-color': '#161616',
         'background-opacity': 1,
         'border-width': 2,
@@ -580,8 +667,8 @@ var cy = cytoscape({
     { selector: 'node[branchKey][kind != "root"].highlighted', style: { 'width': 'mapData(degree, 0, 12, 20, 38)', 'height': 'mapData(degree, 0, 12, 20, 38)' } },
     { selector: 'node[branchKey][kind != "root"].selected', style: { 'width': 'mapData(degree, 0, 12, 26, 46)', 'height': 'mapData(degree, 0, 12, 26, 46)' } },
     { selector: 'node.dimmed', style: { 'opacity': 0.38, 'color': '#444444' } },
-    { selector: 'edge.edge-required', style: { 'width': 2.6, 'line-color': '#ff9f43', 'target-arrow-color': '#ff9f43', 'opacity': 1 } },
-    { selector: 'edge.edge-unlocks', style: { 'width': 2.6, 'line-color': '#4ade80', 'target-arrow-color': '#4ade80', 'opacity': 1 } },
+    { selector: 'edge.edge-required', style: { 'width': 2.6, 'line-color': '#ff9f0a', 'target-arrow-color': '#ff9f0a', 'opacity': 1 } },
+    { selector: 'edge.edge-unlocks', style: { 'width': 2.6, 'line-color': '#32d74b', 'target-arrow-color': '#32d74b', 'opacity': 1 } },
     { selector: 'edge.dimmed', style: { 'opacity': 0.16 } },
     { selector: 'node[image = ""]', style: {
         'background-image': 'none', 'background-color': 'data(color)', 'background-opacity': 0.55
@@ -661,11 +748,27 @@ function updateLegendCollapse(){}
 // icon once you zoom in close enough to appreciate it, or the moment you
 // click/press a specific node to inspect it. The toolbar button is a full
 // manual override for anyone who just wants one look all the time. ----
-var TEXTURE_ZOOM_RATIO = 1.15;
+//
+// This threshold is deliberately an absolute on-screen pixel size, not a
+// multiple of whatever zoom level a given map happened to land on after its
+// fit-to-screen animation. The old approach compared currentZoom to baseZoom
+// (the fit zoom), so the same *physical* pinch/scroll distance flipped the
+// switch at a different point on every map: a small branch sub-map that fits
+// the screen already zoomed in close crossed the ratio almost immediately,
+// while the big main map (fit zoomed way out) needed much more zooming in
+// first. Measuring the actual rendered node size in pixels instead makes the
+// switch happen at the same visual moment -- "icons are now big enough to
+// read" -- on the main map, the full combined map, and every branch map.
+var REF_NODE_MODEL_SIZE = 34; // the "uniform" converged node size (model units) shared by the main map's node style and the branch modal's node style
+var TEXTURE_ON_PX = 30;  // rendered node size (px) above which we switch to textured icons
+var TEXTURE_OFF_PX = 22; // and below which we drop back to flat dots (kept a bit lower than ON so hovering right at the boundary doesn't flicker back and forth)
 var forceTextured = false; // manual override from the toolbar button
+var textureOnState = false;
 function refreshNodeTexture(){
-  var autoTextured = (currentZoom / baseZoom) > TEXTURE_ZOOM_RATIO;
-  var showTextured = forceTextured || autoTextured;
+  var screenPx = currentZoom * REF_NODE_MODEL_SIZE;
+  if (screenPx > TEXTURE_ON_PX) textureOnState = true;
+  else if (screenPx < TEXTURE_OFF_PX) textureOnState = false;
+  var showTextured = forceTextured || textureOnState;
   cy.nodes().toggleClass('simple-node', !showTextured);
   // whatever is currently focused (a pinned node, a tier selection, a search
   // match) should always show its real icon, regardless of how zoomed in
@@ -890,9 +993,34 @@ function showTimeline(node){
 // its own header, instead of expanding inline into the main node system ----
 function branchInfo(key){ return branchBundle.branches[key]; }
 
+// the branch modal is its own cytoscape instance with its own zoom range, so
+// it needs its own baseZoom/currentZoom pair (sharing the main map's would
+// compare two different coordinate spaces) -- but it reuses the exact same
+// sizing curve and simple/textured zoom thresholds as the main node system
+// so the two feel like one consistent style instead of two different maps.
+var branchBaseZoom = 1;
+var branchCurrentZoom = 1;
+function sizeForZoomBranch(deg, minDeg, maxDeg, minSize, maxSize, uniformSize){
+  var raw = maxDeg > minDeg
+    ? minSize + (Math.max(minDeg, Math.min(deg, maxDeg)) - minDeg) / (maxDeg - minDeg) * (maxSize - minSize)
+    : (minSize + maxSize) / 2;
+  var lo = branchBaseZoom, hi = branchBaseZoom * 4;
+  var t = hi > lo ? (branchCurrentZoom - lo) / (hi - lo) : 0;
+  t = Math.max(0, Math.min(1, t));
+  var size = raw + (uniformSize - raw) * t;
+  if (branchCurrentZoom > hi) {
+    var shrink = Math.pow(hi / branchCurrentZoom, 0.55);
+    shrink = Math.max(0.32, shrink);
+    size = size * shrink;
+  }
+  return size;
+}
+
 var branchStyle = [
   { selector: 'node', style: {
-      'shape': 'round-rectangle',
+      /* square, un-filleted border for textured nodes here too -- see the
+         matching comment on the main map's node style above */
+      'shape': 'rectangle',
       'background-color': '#161616',
       'border-width': 2,
       'border-color': 'data(color)',
@@ -901,19 +1029,21 @@ var branchStyle = [
       'background-fit': 'contain',
       'background-clip': 'none',
       'background-image-smoothing': 'no',
-      'width': 'mapData(degree, 0, 12, 28, 58)',
-      'height': 'mapData(degree, 0, 12, 28, 58)',
+      'width': function(ele){ return sizeForZoomBranch(ele.data('degree') || 0, 0, 12, 24, 64, 34); },
+      'height': function(ele){ return sizeForZoomBranch(ele.data('degree') || 0, 0, 12, 24, 64, 34); },
       'label': 'data(label)',
       'color': '#999999',
       'text-valign': 'bottom',
       'text-margin-y': 6,
       'font-family': "'Reddit Sans', sans-serif",
       'font-weight': 600,
-      'font-size': 13,
+      'font-size': function(ele){ return sizeForZoomBranch(ele.data('degree') || 0, 0, 12, 11, 19, 13); },
       'min-zoomed-font-size': 6,
       'text-outline-width': 0,
       'text-wrap': 'wrap',
-      'text-max-width': 90
+      'text-max-width': 90,
+      'transition-property': 'width, height, color, opacity, border-color, border-width',
+      'transition-duration': '0.15s'
   }},
   { selector: 'node[image = ""]', style: { 'background-image': 'none', 'background-color': 'data(color)', 'background-opacity': 0.55 } },
   { selector: 'node.simple-node', style: {
@@ -935,17 +1065,30 @@ var branchStyle = [
   { selector: 'node.highlighted', style: { 'color': '#ffffff', 'border-width': 3, 'border-opacity': 1, 'opacity': 1 } },
   { selector: 'node.selected', style: { 'color': '#ffffff', 'border-width': 4, 'border-opacity': 1, 'z-index': 999 } },
   { selector: 'node.dimmed', style: { 'opacity': 0.3, 'color': '#444444' } },
-  { selector: 'edge.edge-required', style: { 'width': 2.4, 'line-color': '#ff9f43', 'target-arrow-color': '#ff9f43', 'opacity': 1 } },
-  { selector: 'edge.edge-unlocks', style: { 'width': 2.4, 'line-color': '#4ade80', 'target-arrow-color': '#4ade80', 'opacity': 1 } },
+  { selector: 'edge.edge-required', style: { 'width': 2.4, 'line-color': '#ff9f0a', 'target-arrow-color': '#ff9f0a', 'opacity': 1 } },
+  { selector: 'edge.edge-unlocks', style: { 'width': 2.4, 'line-color': '#32d74b', 'target-arrow-color': '#32d74b', 'opacity': 1 } },
   { selector: 'edge.dimmed', style: { 'opacity': 0.15 } }
 ];
 
 var branchCy = null;
 var branchModal = document.getElementById('branch-modal');
-// branch sub-system nodes always show their real texture -- no simple/zoom
-// switching in here, unlike the main map (these networks are smaller and
-// meant to be inspected closely, so the icons stay on the whole time).
-function refreshBranchTexture(){}
+// branch sub-system nodes now use the exact same simple-by-default,
+// textured-on-zoom-in behaviour as the main map, driven by the modal's own
+// baseZoom/currentZoom pair set up in openBranchModal below.
+var branchTextureOnState = false;
+function refreshBranchTexture(){
+  if (!branchCy) return;
+  // same absolute-pixel rule as refreshNodeTexture above, so a branch map
+  // switches to textured icons at the same physical zoom level as the main
+  // map instead of at whatever ratio its own fit-to-screen zoom implied
+  var screenPx = branchCurrentZoom * REF_NODE_MODEL_SIZE;
+  if (screenPx > TEXTURE_ON_PX) branchTextureOnState = true;
+  else if (screenPx < TEXTURE_OFF_PX) branchTextureOnState = false;
+  var showTextured = forceTextured || branchTextureOnState;
+  branchCy.nodes().toggleClass('simple-node', !showTextured);
+  branchCy.nodes('.highlighted, .selected').removeClass('simple-node');
+  if (pinned && pinned.cy && pinned.cy() === branchCy) pinned.removeClass('simple-node');
+}
 
 function focusNodeIn(cyInst, node){
   cyInst.elements().removeClass('dimmed highlighted selected edge-required edge-unlocks');
@@ -1039,14 +1182,40 @@ function openBranchModal(rootNode){
       return;
     }
 
+    branchCy.nodes().addClass('simple-node');
+
+    var branchZoomStyleQueued = false;
+    branchCy.on('zoom', function(){
+      branchCurrentZoom = branchCy.zoom();
+      if (branchZoomStyleQueued) return;
+      branchZoomStyleQueued = true;
+      requestAnimationFrame(function(){
+        branchCy.style().update();
+        branchZoomStyleQueued = false;
+      });
+      refreshBranchTexture();
+    });
+
     branchCy.ready(function(){
       branchCy.resize();
       branchCy.fit(undefined, 40);
+      branchBaseZoom = branchCy.zoom();
+      branchCurrentZoom = branchBaseZoom;
+      refreshBranchTexture();
+      captureBaseBranch();
     });
     branchCy.one('layoutstop', function(){
       branchCy.resize();
       branchCy.fit(undefined, 40);
+      branchBaseZoom = branchCy.zoom();
+      branchCurrentZoom = branchBaseZoom;
+      refreshBranchTexture();
+      captureBaseBranch();
     });
+    // dragging is disabled (autoungrabify) so the only other thing that moves
+    // node positions is the pinned-node "focus" pan/zoom -- recapture after
+    // that settles too, same as the main map's cy.on('layoutstop', captureBase).
+    branchCy.on('layoutstop', captureBaseBranch);
 
     branchCy.on('tap', 'node', function(e){
       var node = e.target;
@@ -1176,6 +1345,18 @@ searchInput.addEventListener('input', function(){
   }
 });
 
+// ---- Default View: resets the map back to its original constellation
+// layout/zoom -- useful after searching, panning, or exploring branch modals.
+function showDefaultView(){
+  pinned = null;
+  clearAll();
+  pane.classList.remove('active');
+  hideTimeline();
+  if (branchModal && branchModal.classList.contains('active')) closeBranchModal();
+
+  cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 500, easing: ANIM_EASE, complete: updateBaseZoom });
+}
+
 // menu button + dropdown (right-aligned next to search, does not touch the graph)
 var menuButton = document.getElementById('menu-button');
 var menuDropdown = document.getElementById('menu-dropdown');
@@ -1187,6 +1368,12 @@ menuButton.addEventListener('click', function(e){
 document.addEventListener('click', function(e){
   if (!menuDropdown.classList.contains('active')) return;
   if (menuDropdown.contains(e.target) || menuButton.contains(e.target)) return;
+  menuDropdown.classList.remove('active');
+  menuButton.classList.remove('active');
+});
+document.getElementById('menu-option-1').addEventListener('click', function(e){
+  e.stopPropagation();
+  showDefaultView();
   menuDropdown.classList.remove('active');
   menuButton.classList.remove('active');
 });
@@ -1202,6 +1389,19 @@ function captureBase(){
 }
 captureBase();
 cy.on('layoutstop', captureBase);
+
+// the branch modal's cytoscape instance needs its own base-position/seed maps
+// (separate node-id space, separate instance) so its nodes get the same
+// floating item-drop drift as the main map instead of sitting static.
+var basePositionsBranch = {};
+var seedsBranch = {};
+function captureBaseBranch(){
+  if (!branchCy) return;
+  branchCy.nodes().forEach(function(n){
+    basePositionsBranch[n.id()] = { x: n.position('x'), y: n.position('y') };
+    if (!seedsBranch[n.id()]) seedsBranch[n.id()] = hashCode(n.id());
+  });
+}
 
 var animStart = Date.now();
 function driftLoop(){
@@ -1221,6 +1421,25 @@ function driftLoop(){
     n.position({ x: base.x + dx, y: base.y + dy });
   });
   cy.endBatch();
+
+  if (branchCy){
+    branchCy.startBatch();
+    branchCy.nodes().forEach(function(n){
+      var base = basePositionsBranch[n.id()];
+      if (!base) return;
+      var seed = seedsBranch[n.id()] || 1;
+      var ampY = 3.6 + (seed % 5) * 0.9;
+      var ampX = 2.0 + (seed % 3) * 0.7;
+      var speedY = 0.5 + (seed % 7) / 16;
+      var speedX = 0.32 + (seed % 5) / 18;
+      var phase = (seed % 628) / 100;
+      var dy = Math.sin(t * speedY + phase) * ampY + Math.sin(t * speedY * 2.3 + phase) * (ampY * 0.25);
+      var dx = Math.cos(t * speedX + phase * 1.7) * ampX;
+      n.position({ x: base.x + dx, y: base.y + dy });
+    });
+    branchCy.endBatch();
+  }
+
   requestAnimationFrame(driftLoop);
 }
 requestAnimationFrame(driftLoop);
