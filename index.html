@@ -108,16 +108,10 @@
     transition: border-color 0.2s var(--ease-apple), box-shadow 0.2s var(--ease-apple);
   }
   #search-box:focus-within { border-color: var(--accent); box-shadow: var(--shadow-panel), 0 0 0 3px rgba(255,159,10,0.18); }
-  #search-box .search-icon {
-    color: var(--text-faint); flex-shrink: 0;
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 14px; height: 14px;
-  }
-  #search-box .search-icon svg { display: block; width: 100%; height: 100%; }
+  #search-box .search-icon { color: var(--text-faint); font-size: 14px; line-height: 1; }
   #search-box input {
     background: transparent; border: none; outline: none; color: var(--text);
     font-family: var(--font-ui); font-weight: 600; font-size: 13px; width: 190px;
-    line-height: normal; padding: 0; margin: 0; height: 100%;
   }
   #search-box input::placeholder { color: var(--text-faint); }
 
@@ -186,14 +180,6 @@
     padding: 7px 11px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em;
     color: var(--text-faint); text-transform: uppercase;
   }
-  #menu-dropdown .menu-credit-link {
-    display: inline; vertical-align: baseline; font: inherit; letter-spacing: inherit;
-    color: var(--text-faint); text-decoration: underline; text-decoration-color: var(--hairline-strong);
-    text-underline-offset: 2px; text-decoration-thickness: 0.5px;
-    transition: color 0.15s var(--ease-apple), text-decoration-color 0.15s var(--ease-apple);
-  }
-  #menu-dropdown .menu-credit-link:hover,
-  #menu-dropdown .menu-credit-link:focus-visible { color: var(--accent); text-decoration-color: var(--accent); }
 
   #details-pane {
     position: absolute; top: calc(78px + var(--safe-top)); right: calc(14px + var(--safe-right)); width: 300px;
@@ -342,6 +328,44 @@
 </style>
 </head>
 <body>
+  <style>
+    #intro-overlay{
+      position:fixed; inset:0; z-index:5000; touch-action:none;
+      background:
+        radial-gradient(ellipse 62% 30% at 50% 74%, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0) 72%),
+        radial-gradient(ellipse at 50% 38%, #16171c 0%, #101114 45%, #0f0f0f 80%);
+    }
+    #intro-overlay canvas{ display:block; width:100vw; height:100vh; }
+    #intro-tag{
+      position:fixed; top:calc(20px + env(safe-area-inset-top,0px)); left:22px;
+      color:var(--text-dim); font-family:var(--font-ui);
+      font-size:12px; font-weight:600; letter-spacing:0.04em; pointer-events:none; z-index:5001;
+      transition:opacity 0.6s ease;
+    }
+    #intro-title-card{
+      position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+      pointer-events:none; z-index:5002; opacity:0; transform:scale(0.96);
+      transition:opacity 0.9s cubic-bezier(0.16,1,0.3,1), transform 0.9s cubic-bezier(0.16,1,0.3,1);
+    }
+    #intro-title-card.show{ opacity:1; transform:scale(1); }
+    #intro-title-card h1{
+      margin:0; color:var(--text); font-family:var(--font-ui); font-weight:700;
+      font-size:32px; letter-spacing:-0.01em; text-shadow:0 2px 6px rgba(0,0,0,0.7);
+    }
+    #intro-title-card .sub{
+      margin-top:6px; color:var(--text-faint); font-family:var(--font-ui);
+      font-size:11px; font-weight:600; letter-spacing:0.07em; text-transform:uppercase;
+    }
+    #intro-overlay.fading{ opacity:0; pointer-events:none; transition:opacity 1.8s cubic-bezier(0.4,0,0.2,1); }
+  </style>
+  <div id="intro-overlay">
+    <div id="intro-tag">Oak Planks</div>
+    <div id="intro-title-card">
+      <h1>Minecraft Progression Map</h1>
+      <div class="sub">From Oak Log to the End</div>
+    </div>
+  </div>
+
   <div id="cy"></div>
 
   <div id="top-bar">
@@ -351,7 +375,7 @@
     </div>
     <div id="top-right-controls">
       <div id="search-box">
-        <span class="search-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
+        <span class="search-icon">&#8981;</span>
         <input id="search-input" type="text" placeholder="search..." />
       </div>
       <div id="menu-button" title="Menu">
@@ -359,8 +383,9 @@
       </div>
       <div id="menu-dropdown">
         <div class="menu-item" id="menu-option-1">Default View</div>
+        <div class="menu-item" id="menu-option-2">Full Combined Map</div>
         <div class="menu-divider"></div>
-        <div class="menu-credit">Made by <a href="https://www.behance.net/geosubash" target="_blank" rel="noopener noreferrer" class="menu-credit-link">Geo</a>, Rishav &amp; Adwaith</div>
+        <div class="menu-credit">Made by Geo, Rishav &amp; Adwaith</div>
       </div>
     </div>
   </div>
@@ -1345,15 +1370,100 @@ searchInput.addEventListener('input', function(){
   }
 });
 
-// ---- Default View: resets the map back to its original constellation
-// layout/zoom -- useful after searching, panning, or exploring branch modals.
-function showDefaultView(){
+// ---- Full Combined Map: merges every branch's sub-network (enchantments,
+// animals, crop items, potions, redstone blocks, construction blocks) directly
+// into the main graph as real nodes/edges, instead of behind a "root" bubble
+// that opens a separate modal. Main-graph nodes keep their existing hand-tuned
+// constellation positions (locked while we work), and each branch's nodes are
+// force-laid-out in place around the anchor node they attach to, so the result
+// reads as one single connected map instead of a fresh, unrelated layout.
+var fullMapActive = false;
+
+function mergeBranchIntoMainGraph(key){
+  var info = branchInfo(key);
+  if (!info) return;
+  var anchorNode = cy.getElementById(info.anchor);
+  if (!anchorNode || anchorNode.empty()) return;
+
+  var newEles = [];
+  info.nodes.forEach(function(n){
+    newEles.push({ data: Object.assign({}, n, { branchKey: key }) });
+  });
+  info.edges.forEach(function(e){
+    if (e.source === info.rootId){
+      // the root hub itself doesn't exist in the full map -- wire its direct
+      // children straight to the real anchor node instead
+      newEles.push({ data: {
+        id: 'full__' + key + '__' + info.anchor + '__' + e.target,
+        source: info.anchor, target: e.target, note: e.note, branchKey: key
+      }});
+    } else {
+      newEles.push({ data: Object.assign({}, e, {
+        id: key + '__' + e.source + '__' + e.target, branchKey: key
+      })});
+    }
+  });
+
+  var added = cy.add(newEles);
+  var apos = anchorNode.position();
+  added.nodes().positions(function(){
+    return { x: apos.x + (Math.random() - 0.5) * 60, y: apos.y + (Math.random() - 0.5) * 60 };
+  });
+
+  added.union(anchorNode).layout({
+    name: 'cose', animate: false, fit: false, randomize: false,
+    nodeRepulsion: 6500, idealEdgeLength: 46, edgeElasticity: 85,
+    nestingFactor: 5, gravity: 90, numIter: 700,
+    initialTemp: 160, coolingFactor: 0.95, minTemp: 1.0
+  }).run();
+}
+
+function showFullCombinedMap(){
+  if (fullMapActive) return;
+  fullMapActive = true;
+
   pinned = null;
   clearAll();
   pane.classList.remove('active');
   hideTimeline();
   if (branchModal && branchModal.classList.contains('active')) closeBranchModal();
 
+  cy.nodes().lock();
+  cy.nodes('[kind = "root"]').remove(); // also removes their "expand" edges
+
+  Object.keys(branchBundle.branches).forEach(function(key){
+    mergeBranchIntoMainGraph(key);
+  });
+
+  cy.nodes().unlock();
+  captureBase();
+  refreshNodeTexture();
+  cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 500, easing: ANIM_EASE, complete: updateBaseZoom });
+}
+
+function showDefaultView(){
+  if (!fullMapActive) return;
+  fullMapActive = false;
+
+  pinned = null;
+  clearAll();
+  pane.classList.remove('active');
+  hideTimeline();
+
+  cy.elements('[branchKey]').remove(); // strips every merged branch node/edge
+
+  var rootEles = { nodes: [], edges: [] };
+  graphData.nodes.forEach(function(n){ if (n.data.kind === 'root') rootEles.nodes.push(n); });
+  graphData.edges.forEach(function(e){ if (e.data.note === 'expand') rootEles.edges.push(e); });
+
+  cy.nodes().lock();
+  var added = cy.add(rootEles);
+  var pos = constellationPositionsWithLandmarks();
+  added.nodes().positions(function(ele){ return pos[ele.id()]; });
+  cy.nodes().unlock();
+
+  captureBase();
+  refreshNodeTexture();
   cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 500, easing: ANIM_EASE, complete: updateBaseZoom });
 }
 
@@ -1374,6 +1484,12 @@ document.addEventListener('click', function(e){
 document.getElementById('menu-option-1').addEventListener('click', function(e){
   e.stopPropagation();
   showDefaultView();
+  menuDropdown.classList.remove('active');
+  menuButton.classList.remove('active');
+});
+document.getElementById('menu-option-2').addEventListener('click', function(e){
+  e.stopPropagation();
+  showFullCombinedMap();
   menuDropdown.classList.remove('active');
   menuButton.classList.remove('active');
 });
@@ -1443,6 +1559,273 @@ function driftLoop(){
   requestAnimationFrame(driftLoop);
 }
 requestAnimationFrame(driftLoop);
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+  var overlay = document.getElementById('intro-overlay');
+  var tagEl = document.getElementById('intro-tag');
+
+  // ---- procedural 16x16 pixel-art textures (no external image loads needed) ----
+  function mkCanvas(painter){
+    var c = document.createElement('canvas'); c.width = 16; c.height = 16;
+    painter(c.getContext('2d')); return c;
+  }
+  function seeded(x,y,salt){ var v = Math.sin(x*127.1 + y*311.7 + salt*74.3) * 43758.5453; return v - Math.floor(v); }
+  function noisyFill(ctx, base, variants, salt){
+    for (var y=0;y<16;y++){ for (var x=0;x<16;x++){
+      var r = seeded(x,y,salt);
+      ctx.fillStyle = r < 0.15 ? variants[0] : r < 0.3 ? variants[1] : base;
+      ctx.fillRect(x,y,1,1);
+    }}
+  }
+  function oakPlanksTex(){ return mkCanvas(function(ctx){
+    noisyFill(ctx,'#a9762f',['#8f5f24','#bd8a42'],1);
+    ctx.fillStyle='#7a5220';
+    for (var y=0;y<16;y+=4) ctx.fillRect(0,y,16,1);
+    for (var x=0;x<16;x+=8) ctx.fillRect(x,0,1,16);
+  }); }
+  function stoneTex(){ return mkCanvas(function(ctx){ noisyFill(ctx,'#8a8a8a',['#787878','#9c9c9c'],2); }); }
+  function ironOreTex(){ return mkCanvas(function(ctx){
+    noisyFill(ctx,'#8a8a8a',['#787878','#969696'],3);
+    for (var i=0;i<7;i++){
+      var x=Math.floor(seeded(i,0,7)*13), y=Math.floor(seeded(0,i,9)*13);
+      ctx.fillStyle='#d8b285'; ctx.fillRect(x,y,2,2);
+      ctx.fillStyle='#f0d3ae'; ctx.fillRect(x,y,1,1);
+    }
+  }); }
+  function diamondBlockTex(){ return mkCanvas(function(ctx){
+    noisyFill(ctx,'#63d9cf',['#4bc4ba','#8ce8e0'],4);
+    ctx.strokeStyle='#3aa8a0'; ctx.lineWidth=1; ctx.strokeRect(0.5,0.5,15,15);
+    for (var i=0;i<5;i++){
+      var x=Math.floor(seeded(i,3,11)*13), y=Math.floor(seeded(3,i,13)*13);
+      ctx.fillStyle='#e8fffb'; ctx.fillRect(x,y,1,1);
+    }
+  }); }
+  function obsidianTex(){ return mkCanvas(function(ctx){
+    noisyFill(ctx,'#160f23',['#0d0916','#2b1f42'],5);
+    for (var i=0;i<6;i++){
+      var x=Math.floor(seeded(i,5,17)*15), y=Math.floor(seeded(5,i,19)*15);
+      ctx.fillStyle='#4a3a72'; ctx.fillRect(x,y,1,1);
+    }
+  }); }
+  function grassTopTex(){ return mkCanvas(function(ctx){ noisyFill(ctx,'#5a9c3f',['#4c8535','#6bb04a'],6); }); }
+  function dirtTex(){ return mkCanvas(function(ctx){ noisyFill(ctx,'#6a4a2c',['#5a3d24','#7a5636'],8); }); }
+  function grassSideTex(){ return mkCanvas(function(ctx){
+    noisyFill(ctx,'#6a4a2c',['#5a3d24','#7a5636'],8);
+    for (var x=0;x<16;x++){ for (var y=0;y<4;y++){ ctx.fillStyle = seeded(x,y,6)<0.2?'#4c8535':'#5a9c3f'; ctx.fillRect(x,y,1,1); } }
+    for (var x2=0;x2<16;x2++){ ctx.fillStyle = seeded(x2,4,20)<0.5?'#4c8535':'#6a4a2c'; ctx.fillRect(x2,4,1,1); }
+  }); }
+
+  function toTexture(canvas){
+    var t = new THREE.CanvasTexture(canvas);
+    t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter; t.needsUpdate = true;
+    return t;
+  }
+  function mat(tex){ return new THREE.MeshStandardMaterial({ map: toTexture(tex), roughness:0.95, metalness:0.05 }); }
+  function uniform(tex){ var m = mat(tex); return [m,m,m,m,m,m]; }
+
+  var blocks = [
+    { name:'Oak Planks',    materials: uniform(oakPlanksTex()),    accent:0xd9a35a },
+    { name:'Stone',         materials: uniform(stoneTex()),        accent:0xbfbfbf },
+    { name:'Iron Ore',      materials: uniform(ironOreTex()),      accent:0xf0d3ae },
+    { name:'Diamond Block', materials: uniform(diamondBlockTex()), accent:0x63e8e0 },
+    { name:'Obsidian',      materials: uniform(obsidianTex()),     accent:0x8a5cf6 },
+    { name:'Grass Block',   materials: (function(){ var s=mat(grassSideTex()), t=mat(grassTopTex()), b=mat(dirtTex()); return [s,s,t,b,s,s]; })(), accent:0x6bd94f }
+  ];
+
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100);
+  var Z_FAR = 9.5, Z_NEAR = 3.3;
+  camera.position.set(0,0,Z_FAR);
+
+  var renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 0);
+  overlay.appendChild(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  var dir1 = new THREE.DirectionalLight(0xffffff, 0.95); dir1.position.set(3,4,5); scene.add(dir1);
+  var dir2 = new THREE.DirectionalLight(0x6688ff, 0.35); dir2.position.set(-4,-2,-3); scene.add(dir2);
+  var accentLight = new THREE.PointLight(0xffffff, 0, 12); accentLight.position.set(0,0,3); scene.add(accentLight);
+
+  var cube = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), blocks[0].materials);
+  cube.rotation.set(0.42,0.6,0);
+  scene.add(cube);
+
+  // little particle burst effect for each transition
+  var PCOUNT = 46;
+  var pGeo = new THREE.BufferGeometry();
+  var pPos = new Float32Array(PCOUNT*3);
+  pGeo.setAttribute('position', new THREE.BufferAttribute(pPos,3));
+  var pMat = new THREE.PointsMaterial({ color:0xffffff, size:0.09, transparent:true, opacity:0, sizeAttenuation:true });
+  var particles = new THREE.Points(pGeo, pMat);
+  scene.add(particles);
+  var pVel = [];
+  function burstParticles(accentColor){
+    pMat.color.set(accentColor !== undefined ? accentColor : 0xffffff);
+    for (var i=0;i<PCOUNT;i++){
+      pPos[i*3]=0; pPos[i*3+1]=0; pPos[i*3+2]=0;
+      var th = Math.random()*Math.PI*2, ph = Math.random()*Math.PI;
+      var spd = 0.6 + Math.random()*0.8;
+      pVel[i] = { x:Math.sin(ph)*Math.cos(th)*spd, y:Math.sin(ph)*Math.sin(th)*spd, z:Math.cos(ph)*spd };
+    }
+    pGeo.attributes.position.needsUpdate = true;
+    pMat.opacity = 1;
+  }
+
+  function applyBlock(i){ cube.material = blocks[i].materials; }
+
+  // Camera distance per block index. Zoom-in builds steadily through Oak -> Obsidian
+  // (the closest point, index 4), then Obsidian -> Grass already starts easing back
+  // out, and the final exit step continues that same pull-back out to Z_FAR -- so
+  // the zoom-out is spread gradually across two steps instead of snapping in one.
+  var Z_MID_OUT = Z_NEAR + (Z_FAR - Z_NEAR) * 0.3; // Grass Block's partially-pulled-back distance
+  var zAt = [];
+  for (var zi=0; zi<5; zi++){ zAt.push(Z_FAR - (Z_FAR - Z_NEAR) * (zi/4)); } // 0..4: Oak -> Obsidian
+  zAt.push(Z_MID_OUT); // 5: Grass Block
+
+  var currentIndex = 0, cooldown = false, done = false;
+  var STEP_DURATION = 700;
+  var stepping = false, stepStart = 0, fromZ = Z_FAR, toZ = Z_FAR;
+  var REST_ROT = { x:0.42, y:0.6, z:0 }; // clean, upright resting pose -- no roll on z
+  var fromRot = { x:0.42, y:0.6, z:0 }, toRot = { x:0.42, y:0.6, z:0 };
+  var pendingIndex = -1, isExitStep = false, materialSwapped = false;
+  var wheelAccum = 0, ACCUM_THRESHOLD = 55;
+
+  // One consistent step for every transition: forward, backward, or the final exit.
+  function startStep(newIndex, dir, exit){
+    cooldown = true; stepping = true; materialSwapped = false;
+    isExitStep = !!exit;
+    pendingIndex = exit ? -1 : newIndex;
+    fromZ = zAt[currentIndex];
+    toZ = exit ? Z_FAR : zAt[newIndex];
+    stepStart = performance.now();
+
+    fromRot = { x: cube.rotation.x, y: cube.rotation.y, z: cube.rotation.z };
+    function landing(restVal, spinDir){
+      var turns = 1 + Math.floor(Math.random()*2); // 1 or 2 full rotations for aggressive spin
+      return restVal + turns * Math.PI * 2 * spinDir;
+    }
+    var signX = Math.random() < 0.5 ? 1 : -1;
+    var signZ = Math.random() < 0.5 ? 1 : -1;
+    toRot = {
+      x: landing(REST_ROT.x, signX),
+      y: landing(REST_ROT.y, dir),
+      z: landing(REST_ROT.z, signZ)
+    };
+
+    var accent = exit ? (blocks[currentIndex].accent) : blocks[newIndex].accent;
+    burstParticles(accent);
+    accentLight.color.set(accent);
+    accentLight.intensity = 2.6;
+    if (exit) tagEl.style.opacity = '0';
+  }
+
+  var titleCard = document.getElementById('intro-title-card');
+  function finishIntro(){
+    // title card fades in over the settled block, holds, then the whole scene fades to reveal the map
+    titleCard.classList.add('show');
+    setTimeout(function(){
+      done = true;
+      overlay.classList.add('fading');
+      setTimeout(function(){
+        overlay.style.display = 'none';
+        window.removeEventListener('wheel', onWheel);
+        window.removeEventListener('touchmove', onTouchMove);
+        window.removeEventListener('touchstart', onTouchStart);
+      }, 1850);
+    }, 1500);
+  }
+
+  function nudge(){
+    var startX = camera.position.x, t0 = performance.now();
+    (function shake(){
+      var t = (performance.now()-t0)/220;
+      if (t >= 1){ camera.position.x = startX; return; }
+      camera.position.x = startX + Math.sin(t*Math.PI*4) * 0.12 * (1-t);
+      requestAnimationFrame(shake);
+    })();
+  }
+
+  function handleDeltaStep(dir){
+    if (cooldown || done) return;
+    var newIndex = currentIndex + dir;
+    if (newIndex >= blocks.length){ startStep(-1, dir, true); return; }
+    if (newIndex < 0){ nudge(); return; }
+    startStep(newIndex, dir, false);
+  }
+
+  function onWheel(e){
+    if (done) return;
+    e.preventDefault();
+    wheelAccum += e.deltaY;
+    if (Math.abs(wheelAccum) >= ACCUM_THRESHOLD){
+      handleDeltaStep(wheelAccum > 0 ? 1 : -1);
+      wheelAccum = 0;
+    }
+  }
+  var touchStartY = null;
+  function onTouchStart(e){ touchStartY = e.touches[0].clientY; }
+  function onTouchMove(e){
+    if (done) return;
+    e.preventDefault();
+    if (touchStartY === null) return;
+    var dy = touchStartY - e.touches[0].clientY;
+    if (Math.abs(dy) > 32){ handleDeltaStep(dy > 0 ? 1 : -1); touchStartY = e.touches[0].clientY; }
+  }
+  window.addEventListener('wheel', onWheel, { passive:false });
+  window.addEventListener('touchstart', onTouchStart, { passive:false });
+  window.addEventListener('touchmove', onTouchMove, { passive:false });
+  window.addEventListener('resize', function(){
+    camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+
+  function animate(){
+    if (!done) requestAnimationFrame(animate);
+
+    if (particles.material.opacity > 0){
+      var pos = pGeo.attributes.position.array;
+      for (var i=0;i<PCOUNT;i++){
+        pos[i*3]   += pVel[i].x * 0.045;
+        pos[i*3+1] += pVel[i].y * 0.045;
+        pos[i*3+2] += pVel[i].z * 0.045;
+      }
+      pGeo.attributes.position.needsUpdate = true;
+      particles.material.opacity = Math.max(0, particles.material.opacity - 0.03);
+    }
+
+    if (accentLight.intensity > 0) accentLight.intensity = Math.max(0, accentLight.intensity - 0.09);
+
+    if (stepping){
+      var t = Math.min((performance.now()-stepStart)/STEP_DURATION, 1);
+      var ease = 1 - Math.pow(1-t,3);
+      var speedFactor = 1 - ease;
+      cube.rotation.x = fromRot.x + (toRot.x - fromRot.x) * ease;
+      cube.rotation.y = fromRot.y + (toRot.y - fromRot.y) * ease;
+      cube.rotation.z = fromRot.z + (toRot.z - fromRot.z) * ease;
+      var pulse = 1 + Math.sin(t*Math.PI) * 0.42;
+      cube.scale.setScalar(pulse);
+      camera.position.z = fromZ + (toZ - fromZ) * ease;
+      if (!isExitStep && t > 0.5 && !materialSwapped){
+        applyBlock(pendingIndex); materialSwapped = true; currentIndex = pendingIndex;
+        tagEl.textContent = blocks[currentIndex].name;
+      }
+      if (t >= 1){
+        stepping = false; cube.scale.setScalar(1);
+        cube.rotation.set(REST_ROT.x, REST_ROT.y, REST_ROT.z);
+        if (isExitStep) finishIntro(); else cooldown = false;
+      }
+    } else {
+      cube.rotation.y = REST_ROT.y + Math.sin(Date.now()*0.00035) * 0.05;
+    }
+
+    renderer.render(scene, camera);
+  }
+  animate();
+})();
 </script>
 </body>
 </html>
