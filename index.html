@@ -383,9 +383,7 @@
       </div>
       <div id="menu-dropdown">
         <div class="menu-item" id="menu-option-1">Default View</div>
-        <div class="menu-item" id="menu-option-2">Full Combined Map</div>
-        <div class="menu-divider"></div>
-        <div class="menu-credit">Made by Geo, Rishav &amp; Adwaith</div>
+        <div class="menu-credit">Made by <a href="https://www.behance.net/geosubash" target="_blank" rel="noopener noreferrer" style="color:inherit; text-decoration:none; border-bottom:1px solid var(--hairline-strong);">Geo</a>, Rishav &amp; Adwaith</div>
       </div>
     </div>
   </div>
@@ -1370,100 +1368,11 @@ searchInput.addEventListener('input', function(){
   }
 });
 
-// ---- Full Combined Map: merges every branch's sub-network (enchantments,
-// animals, crop items, potions, redstone blocks, construction blocks) directly
-// into the main graph as real nodes/edges, instead of behind a "root" bubble
-// that opens a separate modal. Main-graph nodes keep their existing hand-tuned
-// constellation positions (locked while we work), and each branch's nodes are
-// force-laid-out in place around the anchor node they attach to, so the result
-// reads as one single connected map instead of a fresh, unrelated layout.
-var fullMapActive = false;
-
-function mergeBranchIntoMainGraph(key){
-  var info = branchInfo(key);
-  if (!info) return;
-  var anchorNode = cy.getElementById(info.anchor);
-  if (!anchorNode || anchorNode.empty()) return;
-
-  var newEles = [];
-  info.nodes.forEach(function(n){
-    newEles.push({ data: Object.assign({}, n, { branchKey: key }) });
-  });
-  info.edges.forEach(function(e){
-    if (e.source === info.rootId){
-      // the root hub itself doesn't exist in the full map -- wire its direct
-      // children straight to the real anchor node instead
-      newEles.push({ data: {
-        id: 'full__' + key + '__' + info.anchor + '__' + e.target,
-        source: info.anchor, target: e.target, note: e.note, branchKey: key
-      }});
-    } else {
-      newEles.push({ data: Object.assign({}, e, {
-        id: key + '__' + e.source + '__' + e.target, branchKey: key
-      })});
-    }
-  });
-
-  var added = cy.add(newEles);
-  var apos = anchorNode.position();
-  added.nodes().positions(function(){
-    return { x: apos.x + (Math.random() - 0.5) * 60, y: apos.y + (Math.random() - 0.5) * 60 };
-  });
-
-  added.union(anchorNode).layout({
-    name: 'cose', animate: false, fit: false, randomize: false,
-    nodeRepulsion: 6500, idealEdgeLength: 46, edgeElasticity: 85,
-    nestingFactor: 5, gravity: 90, numIter: 700,
-    initialTemp: 160, coolingFactor: 0.95, minTemp: 1.0
-  }).run();
-}
-
-function showFullCombinedMap(){
-  if (fullMapActive) return;
-  fullMapActive = true;
-
-  pinned = null;
-  clearAll();
-  pane.classList.remove('active');
-  hideTimeline();
-  if (branchModal && branchModal.classList.contains('active')) closeBranchModal();
-
-  cy.nodes().lock();
-  cy.nodes('[kind = "root"]').remove(); // also removes their "expand" edges
-
-  Object.keys(branchBundle.branches).forEach(function(key){
-    mergeBranchIntoMainGraph(key);
-  });
-
-  cy.nodes().unlock();
-  captureBase();
-  refreshNodeTexture();
-  cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 500, easing: ANIM_EASE, complete: updateBaseZoom });
-}
-
 function showDefaultView(){
-  if (!fullMapActive) return;
-  fullMapActive = false;
-
   pinned = null;
   clearAll();
   pane.classList.remove('active');
   hideTimeline();
-
-  cy.elements('[branchKey]').remove(); // strips every merged branch node/edge
-
-  var rootEles = { nodes: [], edges: [] };
-  graphData.nodes.forEach(function(n){ if (n.data.kind === 'root') rootEles.nodes.push(n); });
-  graphData.edges.forEach(function(e){ if (e.data.note === 'expand') rootEles.edges.push(e); });
-
-  cy.nodes().lock();
-  var added = cy.add(rootEles);
-  var pos = constellationPositionsWithLandmarks();
-  added.nodes().positions(function(ele){ return pos[ele.id()]; });
-  cy.nodes().unlock();
-
-  captureBase();
-  refreshNodeTexture();
   cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 500, easing: ANIM_EASE, complete: updateBaseZoom });
 }
 
@@ -1484,12 +1393,6 @@ document.addEventListener('click', function(e){
 document.getElementById('menu-option-1').addEventListener('click', function(e){
   e.stopPropagation();
   showDefaultView();
-  menuDropdown.classList.remove('active');
-  menuButton.classList.remove('active');
-});
-document.getElementById('menu-option-2').addEventListener('click', function(e){
-  e.stopPropagation();
-  showFullCombinedMap();
   menuDropdown.classList.remove('active');
   menuButton.classList.remove('active');
 });
