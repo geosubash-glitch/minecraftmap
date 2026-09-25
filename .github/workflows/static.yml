@@ -6,6 +6,9 @@ on:
   push:
     branches: ["main"]
 
+  # Validate the map data on every pull request (no deploy)
+  pull_request:
+
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -17,13 +20,29 @@ permissions:
 
 # Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
 # However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+# (Pull-request validation runs get their own group so they never displace a queued deploy.)
 concurrency:
-  group: "pages"
+  group: ${{ github.event_name == 'pull_request' && format('validate-{0}', github.ref) || 'pages' }}
   cancel-in-progress: false
 
 jobs:
-  # Single deploy job since we're just deploying
+  # Structural checks on assets/js/data.js: unknown ids, dangling links,
+  # missing tier colours, broken network roots. Blocks the deploy on failure.
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Validate map data
+        run: node scripts/validate-data.js
+
   deploy:
+    needs: validate
+    if: github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
