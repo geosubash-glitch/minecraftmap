@@ -1,0 +1,875 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ASCII Depths</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Full-bleed game screen; HUD floats in the corners like an ARPG. Single dark look by design. */
+:root {
+  --void: #050403;
+  --ink: #d9c7a6;
+  --ink-dim: #8a7a62;
+  --blood: #b3261e;
+  --ember: #e58a2b;
+  --panel: rgba(12, 9, 7, 0.78);
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--void);
+  color: var(--ink);
+  font: 500 12px/1.4 var(--mono);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+#stage { position: fixed; inset: 0; display: grid; place-items: center; }
+#screen { display: block; image-rendering: pixelated; cursor: crosshair; }
+.hud {
+  position: fixed;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid rgba(217, 199, 166, 0.14);
+  pointer-events: none;
+}
+#title { top: calc(12px + env(safe-area-inset-top, 0px)); left: 12px; }
+#title b { font-weight: 600; letter-spacing: 0.12em; color: var(--ember); }
+#title span { color: var(--ink-dim); }
+#stats { top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+#hp { color: var(--blood); letter-spacing: -0.05em; }
+#help { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: 12px; color: var(--ink-dim); max-width: min(560px, calc(100vw - 24px)); }
+#help kbd { color: var(--ink); font: inherit; }
+#pad {
+  position: fixed;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end;
+  max-width: calc(100vw - 24px);
+}
+#pad button {
+  font: 600 12px var(--mono);
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid rgba(217, 199, 166, 0.25);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+#pad button:hover { border-color: var(--ember); }
+#pad button:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
+#pad #fire { color: var(--ember); }
+@media (max-width: 640px) {
+  #help { display: none; }
+  #title span { display: none; }
+}
+@media (hover: hover) and (pointer: fine) {
+  #pad .touch { display: none; }
+}
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="screen" aria-label="Game view"></canvas></div>
+
+<div class="hud" id="title"><b>ASCII DEPTHS</b> <span>lighting prototype</span></div>
+<div class="hud" id="stats"><div id="hp"></div><div id="info"></div></div>
+<div class="hud" id="help">
+  <kbd>click</kbd> move &nbsp; <kbd>right-click</kbd>/<kbd>space</kbd> fireball &nbsp; <kbd>WASD</kbd> walk<br>
+  <kbd>Q</kbd>/<kbd>E</kbd> rotate camera &nbsp; <kbd>wheel</kbd> zoom &nbsp; <kbd>N</kbd> day/night &nbsp; <kbd>G</kbd> glow &nbsp; <kbd>[</kbd>/<kbd>]</kbd> detail
+</div>
+<div id="pad">
+  <button id="rotL" class="touch" type="button" aria-label="Rotate camera left">&lt; turn</button>
+  <button id="rotR" class="touch" type="button" aria-label="Rotate camera right">turn &gt;</button>
+  <button id="night" type="button">night</button>
+  <button id="fire" type="button">fireball</button>
+</div>
+
+<script>
+"use strict";
+// =====================================================================
+//  ASCII DEPTHS. A ray-traced heightfield world, shaded per character cell.
+//  Every cell casts one orthographic ray (Diablo-style 3/4 camera),
+//  gets lit by point lights + moon/sun with real shadow rays,
+//  then is turned into a glyph (density = brightness) and a colour.
+// =====================================================================
+
+// ---------- tiny utils ----------
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const rand = mulberry32(1337);
+function hash2(x, y){ let h = (x*374761393 + y*668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+function vnoise(x, y){
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x-ix, fy = y-iy;
+  const ux = fx*fx*(3-2*fx), uy = fy*fy*(3-2*fy);
+  const a = hash2(ix,iy), b = hash2(ix+1,iy), c = hash2(ix,iy+1), d = hash2(ix+1,iy+1);
+  return a + (b-a)*ux + (c-a)*uy + (a-b-c+d)*ux*uy;
+}
+const clamp = (v,a,b)=> v<a?a:v>b?b:v;
+
+// ---------- world ----------
+const MW = 80, MH = 80, ZMAX = 3.8;
+const HGT = new Float32Array(MW*MH);
+const MAT = new Uint8Array(MW*MH);
+const TN  = new Float32Array(MW*MH); // per-tile random tint
+const M = { GRASS:0, STONE:1, WALL:2, PILLAR:3, WATER:4, DIRT:5, RUBBLE:6, IRON:7, ROCK:8, VOID:255,
+            CLOTH:20, SKIN:21, BONE:22, FIRE:23 };
+
+function setT(x,y,h,m){ if(x<0||y<0||x>=MW||y>=MH) return; HGT[y*MW+x]=h; MAT[y*MW+x]=m; }
+function getH(x,y){ return (x<0||y<0||x>=MW||y>=MH) ? 0 : HGT[y*MW+x]; }
+function getM(x,y){ return (x<0||y<0||x>=MW||y>=MH) ? M.VOID : MAT[y*MW+x]; }
+
+const BRAZIERS = [];
+(function buildMap(){
+  for (let y=0;y<MH;y++) for (let x=0;x<MW;x++){
+    const k=y*MW+x; TN[k]=hash2(x*7+3,y*13+5);
+    HGT[k]=0; MAT[k] = vnoise(x*0.12,y*0.12) > 0.68 ? M.DIRT : M.GRASS;
+  }
+  // dirt road from the south gate
+  for (let y=58;y<MH;y++){ const cx = 40 + Math.round(Math.sin(y*0.25)*2); for (let x=cx-2;x<=cx+2;x++) setT(x,y,0,M.DIRT); }
+  // boulders outside
+  for (let n=0;n<70;n++){
+    const x=Math.floor(rand()*MW), y=Math.floor(rand()*MH);
+    if (x>18&&x<62&&y>18&&y<62) continue;
+    if (Math.abs(x-40)<4 && y>56) continue;
+    const h=0.3+rand()*0.9; setT(x,y,h,M.ROCK);
+    if (rand()<0.4) setT(x+1,y,h*0.7,M.ROCK);
+    if (rand()<0.3) setT(x,y+1,h*0.5,M.ROCK);
+  }
+  // standing stones (east)
+  for (let i=0;i<9;i++){ const a=i/9*Math.PI*2; setT(Math.round(70+Math.cos(a)*5), Math.round(40+Math.sin(a)*5), i%3===1?1.1:2.6, M.ROCK); }
+  setT(70,40,0.5,M.ROCK);
+  // courtyard floor
+  for (let y=22;y<=58;y++) for (let x=22;x<=58;x++) setT(x,y,0,M.STONE);
+  // outer wall with crumbling and gates
+  for (let i=22;i<=58;i++){
+    for (const [x,y] of [[i,22],[i,58],[22,i],[58,i]]){
+      const n = vnoise(x*0.35+y*0.35, 4.2);
+      let h = 2.3 + n*0.9, m = M.WALL;
+      if (n < 0.28){ h = 0.5 + n*2.5; m = M.RUBBLE; }
+      setT(x,y,h,m);
+    }
+  }
+  for (const [gx,gy,horiz] of [[40,22,1],[40,58,1],[22,40,0],[58,40,0]]){
+    for (let d=-2; d<=2; d++){ if (horiz) setT(gx+d,gy,0,M.STONE); else setT(gx,gy+d,0,M.STONE); }
+    for (const s of [-1,1]){ // towers
+      for (let a=0;a<2;a++) for (let b=0;b<2;b++){
+        if (horiz) setT(gx+s*(3+a), gy-1+b*2, 3.5, M.WALL); else setT(gx-1+b*2, gy+s*(3+a), 3.5, M.WALL);
+      }
+    }
+  }
+  // ruined chapel, NW corner
+  for (let i=25;i<=34;i++){
+    for (const [x,y] of [[i,25],[i,34],[25,i],[34,i]]){
+      const broken = hash2(x,y) < 0.22;
+      setT(x,y, broken ? 0.35 : 1.9 + hash2(y,x)*0.5, broken ? M.RUBBLE : M.WALL);
+    }
+  }
+  setT(30,34,0,M.STONE); setT(31,34,0,M.STONE); setT(34,29,0,M.STONE);
+  setT(29,29,0.9,M.IRON); // altar
+  // dais and pool in the centre
+  for (let y=34;y<=46;y++) for (let x=34;x<=46;x++){
+    const d = Math.hypot(x-40,y-40);
+    if (d<=6.2) setT(x,y,0.25,M.STONE);
+    if (d<=3.2) setT(x,y,0.42,M.STONE);
+    if (d<=2.5) setT(x,y,-0.15,M.WATER);
+  }
+  // pillar ring
+  for (let i=0;i<12;i++){
+    const a=i/12*Math.PI*2+0.13, x=Math.round(40+Math.cos(a)*10), y=Math.round(40+Math.sin(a)*10);
+    const broken = i%4===2;
+    setT(x,y, broken ? 1.1 : 3.2, M.PILLAR);
+    if (broken){ setT(x+1,y,0.3,M.RUBBLE); setT(x,y+1,0.2,M.RUBBLE); }
+  }
+  // scattered rubble inside
+  for (let n=0;n<40;n++){
+    const x=23+Math.floor(rand()*35), y=23+Math.floor(rand()*35);
+    if (getM(x,y)===M.STONE && getH(x,y)===0) setT(x,y,0.1+rand()*0.25,M.RUBBLE);
+  }
+  // braziers
+  for (const [x,y] of [[33,33],[47,33],[33,47],[47,47],[29,30],[40,61]]){
+    setT(x,y,0.85,M.IRON);
+    BRAZIERS.push({x:x+0.5,y:y+0.5,z:0.85,phase:rand()*10});
+  }
+})();
+
+function groundAt(x,y){ return Math.max(0,getH(Math.floor(x),Math.floor(y))); }
+function walkable(x,y){
+  const r=0.28;
+  for (const [ox,oy] of [[-r,-r],[r,-r],[-r,r],[r,r]]){
+    const tx=Math.floor(x+ox), ty=Math.floor(y+oy);
+    if (tx<1||ty<1||tx>=MW-1||ty>=MH-1) return false;
+    const h=HGT[ty*MW+tx], m=MAT[ty*MW+tx];
+    if (h>0.5 || m===M.WATER || m===M.IRON) return false;
+  }
+  return true;
+}
+function lineOfSight(ax,ay,bx,by){
+  const n=Math.ceil(Math.hypot(bx-ax,by-ay)*3);
+  for (let i=1;i<n;i++){ const t=i/n; if (getH(Math.floor(ax+(bx-ax)*t),Math.floor(ay+(by-ay)*t))>1.2) return false; }
+  return true;
+}
+
+// ---------- game state ----------
+const player = { x:40.5, y:55.5, z:0, tx:null, ty:null, hp:100, kills:0, hurt:0 };
+const skels = [];
+const fireballs = [];
+const flashes = [];   // temporary lights
+const parts = [];     // particles
+let night = true, glow = true;
+let camYaw = Math.PI*0.25, camYawT = camYaw, camPitch = 0.86, zoom = 1;
+let camX = player.x, camY = player.y, camZ = 0;
+let time = 0;
+
+function spawnSkeleton(){
+  for (let tries=0; tries<50; tries++){
+    const x=24+rand()*33, y=24+rand()*33;
+    if (!walkable(x,y) || Math.hypot(x-player.x,y-player.y)<9) continue;
+    skels.push({x,y,z:groundAt(x,y),vx:0,vy:0,wt:0,hd:rand()*6.28,dead:0});
+    return;
+  }
+}
+for (let i=0;i<9;i++) spawnSkeleton();
+
+// ---------- rendering setup ----------
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
+const glyphCv = document.createElement('canvas'), gctx = glyphCv.getContext('2d');
+const colorCv = document.createElement('canvas'), cctx = colorCv.getContext('2d');
+const glowCv  = document.createElement('canvas'), wctx = glowCv.getContext('2d');
+const atlas = document.createElement('canvas'), actx = atlas.getContext('2d');
+
+// glyph ramps, dark -> bright
+const RAMP_SRC = {
+  stone:  " .,:;-=+*#%",
+  groutH: " ._-=",
+  groutV: " .:|!",
+  brick:  " .:;i!lI#%@",
+  top:    " .:-=+*#",
+  pillar: " .:!|lI#H@",
+  grass:  " .,'\";vwVW#",
+  dirt:   " .,:;~o8%",
+  water:  " .,-~=*",
+  rock:   " .:;oO0#@",
+  iron:   " .:=#@",
+  cloth:  " .:+xX%@",
+  skin:   " .:oO@",
+  bone:   " .:;cCO@",
+  fire:   " .^*#@",
+  rubble: " .,:;%&#",
+};
+const RAMP = {};
+let ALL_CHARS = "";
+for (const k in RAMP_SRC) for (const ch of RAMP_SRC[k]) if (!ALL_CHARS.includes(ch)) ALL_CHARS += ch;
+for (const ch of "'`*.+") if (!ALL_CHARS.includes(ch)) ALL_CHARS += ch;
+const CHAR_IDX = {}; [...ALL_CHARS].forEach((c,i)=>CHAR_IDX[c]=i);
+for (const k in RAMP_SRC) RAMP[k] = [...RAMP_SRC[k]].map(c=>CHAR_IDX[c]);
+
+let fontPx = 0, cwp = 0, chp = 0, dpr = 1, cols = 0, rows = 0;
+let gIdx, colR, colG, colB, depthBuf, pickX, pickY, colorImg, glowImg;
+
+function buildAtlas(){
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  const font = `600 ${fontPx*dpr}px "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace`;
+  actx.font = font;
+  cwp = Math.ceil(actx.measureText("M").width);
+  chp = Math.ceil(fontPx*1.18*dpr);
+  atlas.width = cwp*ALL_CHARS.length; atlas.height = chp;
+  actx.font = font; actx.fillStyle = "#fff"; actx.textAlign = "center"; actx.textBaseline = "middle";
+  [...ALL_CHARS].forEach((c,i)=>actx.fillText(c, i*cwp+cwp/2, chp/2+dpr));
+}
+function resize(){
+  if (!fontPx){ fontPx = clamp(Math.round(window.innerWidth/170/0.6), 8, 13); }
+  buildAtlas();
+  const W = window.innerWidth*dpr, H = window.innerHeight*dpr;
+  cols = Math.max(20, Math.floor(W/cwp)); rows = Math.max(12, Math.floor(H/chp));
+  canvas.width = cols*cwp; canvas.height = rows*chp;
+  canvas.style.width = (cols*cwp/dpr)+"px"; canvas.style.height = (rows*chp/dpr)+"px";
+  glyphCv.width = canvas.width; glyphCv.height = canvas.height;
+  colorCv.width = glowCv.width = cols; colorCv.height = glowCv.height = rows;
+  const n = cols*rows;
+  gIdx = new Uint8Array(n); colR = new Float32Array(n); colG = new Float32Array(n); colB = new Float32Array(n);
+  depthBuf = new Float32Array(n); pickX = new Float32Array(n); pickY = new Float32Array(n);
+  colorImg = cctx.createImageData(cols, rows); glowImg = wctx.createImageData(cols, rows);
+}
+
+// ---------- per-frame scene (spheres + lights) ----------
+const MAXS = 64;
+const SX=new Float32Array(MAXS), SY=new Float32Array(MAXS), SZ=new Float32Array(MAXS), SA=new Float32Array(MAXS), SC=new Float32Array(MAXS);
+const SM=new Uint8Array(MAXS), SER=new Float32Array(MAXS), SEG=new Float32Array(MAXS), SEB=new Float32Array(MAXS);
+const SCOL=new Float32Array(MAXS), SROW=new Float32Array(MAXS), SEXX=new Float32Array(MAXS), SEXY=new Float32Array(MAXS);
+let NS = 0;
+function addS(x,y,z,a,c,m,er,eg,eb){ if (NS>=MAXS) return; SX[NS]=x;SY[NS]=y;SZ[NS]=z;SA[NS]=a;SC[NS]=c;SM[NS]=m;SER[NS]=er||0;SEG[NS]=eg||0;SEB[NS]=eb||0;NS++; }
+
+const MAXL = 24;
+const LX=new Float32Array(MAXL), LY=new Float32Array(MAXL), LZ=new Float32Array(MAXL), LR=new Float32Array(MAXL), LG=new Float32Array(MAXL), LB=new Float32Array(MAXL), LRAD=new Float32Array(MAXL);
+let NL = 0;
+function addL(x,y,z,r,g,b,rad){ if (NL>=MAXL) return; LX[NL]=x;LY[NL]=y;LZ[NL]=z;LR[NL]=r;LG[NL]=g;LB[NL]=b;LRAD[NL]=rad;NL++; }
+
+let dirX=0, dirY=0, dirZ=1, dirR=0, dirG=0, dirB=0, ambR=0, ambG=0, ambB=0;
+let torchX=0, torchY=0, torchZ=0;
+
+function buildScene(){
+  NS = 0; NL = 0;
+  const pz = player.z;
+  // torch held off the right shoulder (relative to camera), so shadows fall away from view
+  const rx = Math.sin(camYaw), ry = -Math.cos(camYaw);
+  torchX = player.x + rx*0.38; torchY = player.y + ry*0.38; torchZ = pz + 1.65;
+  const fl = 0.88 + 0.12*vnoise(time*9, 1.7);
+  addS(player.x, player.y, pz+0.58, 0.31, 0.58, M.CLOTH);
+  addS(player.x, player.y, pz+1.32, 0.19, 0.19, M.SKIN);
+  addS(torchX, torchY, torchZ, 0.07, 0.11, M.FIRE, 6, 3.2, 1.2);
+  addL(torchX, torchY, torchZ + 0.05, 2.5*fl, 1.55*fl, 0.75*fl, night ? 10 : 6);
+
+  for (const b of BRAZIERS){
+    const f = 0.8 + 0.2*vnoise(time*7+b.phase, b.phase) + 0.08*Math.sin(time*23+b.phase);
+    addS(b.x, b.y, b.z+0.28, 0.22*f+0.04, 0.32*f, M.FIRE, 7*f, 3.4*f, 0.9*f);
+    addL(b.x, b.y, b.z+0.65, 3.4*f, 1.75*f, 0.55*f, 10);
+  }
+  for (const s of skels){
+    const sink = s.dead ? Math.min(1, s.dead*1.4) : 0;
+    if (sink>=1) continue;
+    addS(s.x, s.y, s.z+0.5-sink*0.6, 0.2, 0.46*(1-sink*0.6), M.BONE);
+    addS(s.x, s.y, s.z+1.07-sink*1.0, 0.15, 0.15, M.BONE);
+    // ember eyes
+    if (!s.dead) addS(s.x + Math.cos(s.hd)*0.12, s.y + Math.sin(s.hd)*0.12, s.z+1.1, 0.05, 0.04, M.FIRE, 6, 0.6, 0.3);
+  }
+  for (const f of fireballs){
+    addS(f.x, f.y, f.z, 0.2, 0.2, M.FIRE, 9, 4, 1.2);
+    addL(f.x, f.y, f.z, 4.2, 2.0, 0.6, 8);
+  }
+  for (const L of flashes){ const k = L.life/L.max; addL(L.x, L.y, L.z, L.r*k, L.g*k, L.b*k, L.rad); }
+
+  if (night){
+    const dx=-0.45, dy=0.55, dz=0.70, n=Math.hypot(dx,dy,dz);
+    dirX=dx/n; dirY=dy/n; dirZ=dz/n; dirR=0.07; dirG=0.095; dirB=0.17;
+    ambR=0.006; ambG=0.008; ambB=0.016;
+  } else {
+    const dx=0.55, dy=-0.35, dz=0.75, n=Math.hypot(dx,dy,dz);
+    dirX=dx/n; dirY=dy/n; dirZ=dz/n; dirR=1.35; dirG=1.18; dirB=0.95;
+    ambR=0.10; ambG=0.12; ambB=0.16;
+  }
+}
+
+// ---------- ray tracing ----------
+let hT=0, hX=0, hY=0, hZ=0, hNX=0, hNY=0, hNZ=1, hM=0, hS=-1, hTop=true;
+
+function traceTerrain(ox,oy,oz,dx,dy,dz){
+  let t0 = oz > ZMAX ? (oz-ZMAX)/(-dz) : 0;
+  const px = ox+dx*t0, py = oy+dy*t0;
+  let ix = Math.floor(px), iy = Math.floor(py);
+  const sx = dx>0?1:-1, sy = dy>0?1:-1;
+  const tdx = dx!==0 ? Math.abs(1/dx) : 1e30, tdy = dy!==0 ? Math.abs(1/dy) : 1e30;
+  let tmx = dx>0 ? t0+(ix+1-px)/dx : dx<0 ? t0+(px-ix)/(-dx) : 1e30;
+  let tmy = dy>0 ? t0+(iy+1-py)/dy : dy<0 ? t0+(py-iy)/(-dy) : 1e30;
+  let te = t0, axis = -1;
+  for (let n=0; n<200; n++){
+    const inb = ix>=0 && iy>=0 && ix<MW && iy<MH;
+    const k = iy*MW+ix;
+    const h = inb ? HGT[k] : 0;
+    if (oz+dz*te <= h){
+      hT = te; hTop = axis<0; hM = inb ? MAT[k] : M.VOID;
+      if (axis===0){ hNX=-sx; hNY=0; hNZ=0; } else if (axis===1){ hNX=0; hNY=-sy; hNZ=0; } else { hNX=0; hNY=0; hNZ=1; }
+      return;
+    }
+    const tx = tmx<tmy ? tmx : tmy;
+    if (oz+dz*tx <= h){
+      hT = (oz-h)/(-dz); hTop = true; hM = inb ? MAT[k] : M.VOID; hNX=0; hNY=0; hNZ=1;
+      return;
+    }
+    if (tmx<tmy){ te=tmx; tmx+=tdx; ix+=sx; axis=0; } else { te=tmy; tmy+=tdy; iy+=sy; axis=1; }
+  }
+  hT = (oz+0.2)/(-dz); hTop = true; hM = M.VOID; hNX=0; hNY=0; hNZ=1;
+}
+
+// ray vs ellipsoid (a = horizontal radius, c = vertical)
+function hitEllipsoid(i, ox,oy,oz,dx,dy,dz){
+  const s = SA[i]/SC[i];
+  const qx = ox-SX[i], qy = oy-SY[i], qz = (oz-SZ[i])*s, ez = dz*s;
+  const A = dx*dx+dy*dy+ez*ez, B = qx*dx+qy*dy+qz*ez, C = qx*qx+qy*qy+qz*qz-SA[i]*SA[i];
+  const disc = B*B-A*C;
+  if (disc<0) return -1;
+  return (-B-Math.sqrt(disc))/A;
+}
+
+// is the segment p->l blocked? (terrain + non-emissive spheres)
+function occluded(px,py,pz,lx,ly,lz){
+  const dx=lx-px, dy=ly-py, dz=lz-pz;
+  for (let i=0;i<NS;i++){
+    if (SM[i]===M.FIRE) continue;
+    const s=SA[i]/SC[i];
+    const qx=px-SX[i], qy=py-SY[i], qz=(pz-SZ[i])*s, ez=dz*s;
+    const B=qx*dx+qy*dy+qz*ez, C=qx*qx+qy*qy+qz*qz-SA[i]*SA[i];
+    if (C<0) continue; // starting inside (self)
+    if (B>0) continue;
+    const A=dx*dx+dy*dy+ez*ez, disc=B*B-A*C;
+    if (disc<0) continue;
+    const t=(-B-Math.sqrt(disc))/A;
+    if (t>0.001 && t<1) return true;
+  }
+  let ix=Math.floor(px), iy=Math.floor(py);
+  const sx=dx>0?1:-1, sy=dy>0?1:-1;
+  const tdx=dx!==0?Math.abs(1/dx):1e30, tdy=dy!==0?Math.abs(1/dy):1e30;
+  let tmx = dx>0 ? (ix+1-px)/dx : dx<0 ? (px-ix)/(-dx) : 1e30;
+  let tmy = dy>0 ? (iy+1-py)/dy : dy<0 ? (py-iy)/(-dy) : 1e30;
+  let t=0;
+  for (let n=0;n<64;n++){
+    const h = (ix>=0&&iy>=0&&ix<MW&&iy<MH) ? HGT[iy*MW+ix] : 0;
+    let tn = tmx<tmy?tmx:tmy; if (tn>1) tn=1;
+    const zmin = dz<0 ? pz+dz*tn : pz+dz*t;
+    if (zmin < h-0.002) return true;
+    if (tn>=1) return false;
+    if (tmx<tmy){ t=tmx; tmx+=tdx; ix+=sx; } else { t=tmy; tmy+=tdy; iy+=sy; }
+  }
+  return false;
+}
+
+// ---------- shading ----------
+let OR=0, OG=0, OB=0, ORAMP=RAMP.stone, OEMIT=false;
+let vx=0, vy=0, vz=0; // direction to viewer
+
+function light(px,py,pz,nx,ny,nz,ar,ag,ab,ks,shin,ao){
+  const ox = px+nx*0.02, oy = py+ny*0.02, oz = pz+nz*0.02;
+  let r = ambR*ao*ar, g = ambG*ao*ag, b = ambB*ao*ab;
+  // hemisphere bounce: up-facing gets more sky
+  const sky = 0.6 + 0.4*nz;
+  r*=sky; g*=sky; b*=sky;
+  // sun / moon
+  let ndl = nx*dirX+ny*dirY+nz*dirZ;
+  if (ndl>0){
+    const len = (ZMAX+0.2-oz)/dirZ;
+    if (!occluded(ox,oy,oz, ox+dirX*len, oy+dirY*len, oz+dirZ*len)){
+      r += ar*dirR*ndl; g += ag*dirG*ndl; b += ab*dirB*ndl;
+      if (ks>0){
+        let hx=dirX+vx, hy=dirY+vy, hz=dirZ+vz; const hn=1/Math.hypot(hx,hy,hz);
+        const sp = ks*Math.pow(Math.max(0,(nx*hx+ny*hy+nz*hz)*hn), shin);
+        r+=dirR*sp; g+=dirG*sp; b+=dirB*sp;
+      }
+    }
+  }
+  // point lights
+  for (let i=0;i<NL;i++){
+    let lx=LX[i]-ox, ly=LY[i]-oy, lz=LZ[i]-oz;
+    const d2 = lx*lx+ly*ly+lz*lz, R=LRAD[i];
+    if (d2 > R*R) continue;
+    const inv = 1/Math.sqrt(d2); lx*=inv; ly*=inv; lz*=inv;
+    ndl = nx*lx+ny*ly+nz*lz;
+    if (ndl<=0) continue;
+    let w = 1 - d2/(R*R); w*=w;
+    const att = w/(1+d2*0.45);
+    if (att*ndl < 0.003) continue;
+    if (occluded(ox,oy,oz, LX[i],LY[i],LZ[i])) continue;
+    const k = att*ndl;
+    r += ar*LR[i]*k; g += ag*LG[i]*k; b += ab*LB[i]*k;
+    if (ks>0){
+      let hx=lx+vx, hy=ly+vy, hz=lz+vz; const hn=1/Math.hypot(hx,hy,hz);
+      const sp = ks*att*Math.pow(Math.max(0,(nx*hx+ny*hy+nz*hz)*hn), shin);
+      r+=LR[i]*sp; g+=LG[i]*sp; b+=LB[i]*sp;
+    }
+  }
+  OR=r; OG=g; OB=b;
+}
+
+// ambient occlusion from neighbouring taller tiles (cheap, per hit)
+function aoTop(px,py,pz){
+  const ix=Math.floor(px), iy=Math.floor(py), fx=px-ix, fy=py-iy;
+  let occ=0;
+  const e=(dist,h)=>{ const dh=h-pz; if (dh>0.15){ const k=clamp(1-dist/0.7,0,1); occ += k*Math.min(1,dh); } };
+  e(1-fx, getH(ix+1,iy)); e(fx, getH(ix-1,iy)); e(1-fy, getH(ix,iy+1)); e(fy, getH(ix,iy-1));
+  return 1 - 0.45*Math.min(1.2,occ);
+}
+
+function shadeHit(px,py,pz){
+  let nx=hNX, ny=hNY, nz=hNZ;
+  let ar=0.3, ag=0.3, ab=0.3, ks=0.0, shin=16, ao=1, ramp=RAMP.stone;
+  OEMIT=false;
+  const m = hM;
+  if (hS>=0){
+    const i=hS;
+    if (m===M.FIRE){
+      const r=SER[i], g=SEG[i], b=SEB[i];
+      // hot core toward the middle of the flame
+      const rim = Math.max(0, nx*vx+ny*vy+nz*vz);
+      OR=r*(0.5+rim); OG=g*(0.4+rim*rim); OB=b*(0.4+rim*rim); ORAMP=RAMP.fire; OEMIT=true; return;
+    }
+    if (m===M.CLOTH){ ar=0.42; ag=0.055; ab=0.045; ks=0.15; shin=8; ramp=RAMP.cloth; }
+    else if (m===M.SKIN){ ar=0.55; ag=0.36; ab=0.26; ks=0.2; shin=12; ramp=RAMP.skin; }
+    else if (m===M.BONE){ ar=0.62; ag=0.57; ab=0.46; ks=0.25; shin=20; ramp=RAMP.bone; }
+    ao = 0.7 + 0.3*clamp((pz - groundAt(px,py))/0.6,0,1);
+  } else {
+    const ix=Math.floor(px), iy=Math.floor(py), k=(ix>=0&&iy>=0&&ix<MW&&iy<MH)?iy*MW+ix:0, tn=TN[k];
+    const fx=px-ix, fy=py-iy;
+    if (m===M.STONE){
+      const gx=Math.min(fx,1-fx), gy=Math.min(fy,1-fy);
+      const v = 0.8+tn*0.4;
+      ar=0.30*v; ag=0.27*v; ab=0.23*v; ks=0.12; shin=24; ramp=RAMP.stone;
+      const moss = vnoise(px*0.35, py*0.35);
+      if (moss>0.62){ const mk=(moss-0.62)*2.2; ar*=1-mk*0.4; ag*=1+mk*0.1; ab*=1-mk*0.6; }
+      if (!hTop){ ramp=RAMP.brick; }
+      else if (gx<0.06 || gy<0.06){ ar*=0.35; ag*=0.35; ab*=0.35; ramp = gx<gy ? RAMP.groutV : RAMP.groutH; }
+    } else if (m===M.WALL || m===M.RUBBLE){
+      const v = 0.85+tn*0.3;
+      ar=0.34*v; ag=0.25*v; ab=0.19*v; ks=0.08; shin=12;
+      if (m===M.RUBBLE){ ar*=0.8; ag*=0.8; ab*=0.85; ramp=RAMP.rubble; }
+      if (!hTop){
+        const u = nx!==0 ? py : px;
+        const row = Math.floor(pz/0.28), off = (row&1)*0.3;
+        const fz = pz/0.28-row, fu = (u+off)/0.6 - Math.floor((u+off)/0.6);
+        const bv = 0.85 + hash2(Math.floor((u+off)/0.6)*7+k, row)*0.3;
+        ar*=bv; ag*=bv; ab*=bv;
+        if (m===M.WALL) ramp = RAMP.brick;
+        if (fz<0.14){ ar*=0.4; ag*=0.4; ab*=0.4; ramp=RAMP.groutH; }
+        else if (fu<0.07){ ar*=0.45; ag*=0.45; ab*=0.45; ramp=RAMP.groutV; }
+        ao = 0.45 + 0.55*clamp(pz/1.0,0,1);
+      } else if (m===M.WALL) ramp = RAMP.top;
+    } else if (m===M.PILLAR){
+      ar=0.46; ag=0.44; ab=0.41; ks=0.35; shin=30; ramp = hTop ? RAMP.top : RAMP.pillar;
+      if (!hTop){
+        // fluting: bend the normal sideways across the face
+        const u = (nx!==0 ? py : px), fu = u-Math.floor(u);
+        const bend = Math.sin(fu*Math.PI*2*3)*0.35, tx = nx!==0 ? 0 : 1, ty = nx!==0 ? 1 : 0;
+        nx += tx*bend; ny += ty*bend; const nn=1/Math.hypot(nx,ny,nz); nx*=nn; ny*=nn; nz*=nn;
+        ao = 0.5 + 0.5*clamp(pz/1.2,0,1);
+      }
+    } else if (m===M.WATER){
+      ar=0.015; ag=0.04; ab=0.06; ks=1.6; shin=60; ramp=RAMP.water;
+      nx = 0.10*Math.sin(px*4.1+time*2.3) + 0.07*Math.sin(py*5.3-time*1.7+px);
+      ny = 0.10*Math.sin(py*3.7+time*2.0) + 0.07*Math.cos(px*4.9+time*1.3);
+      nz = 1; const nn=1/Math.hypot(nx,ny,nz); nx*=nn; ny*=nn; nz*=nn;
+    } else if (m===M.GRASS){
+      const g = vnoise(px*1.7,py*1.7)*0.5 + tn*0.5;
+      ar=0.07+g*0.06; ag=0.13+g*0.09; ab=0.035+g*0.02; ramp=RAMP.grass;
+    } else if (m===M.DIRT){
+      const g = vnoise(px*2.3,py*2.3);
+      ar=0.20+g*0.06; ag=0.14+g*0.04; ab=0.08+g*0.02; ramp=RAMP.dirt;
+    } else if (m===M.ROCK){
+      const g = vnoise(px*3+pz,py*3-pz);
+      ar=0.17+g*0.08; ag=0.17+g*0.07; ab=0.18+g*0.06; ks=0.1; ramp=RAMP.rock;
+      if (!hTop) ao = 0.5+0.5*clamp(pz/1.2,0,1);
+    } else if (m===M.IRON){
+      ar=0.09; ag=0.08; ab=0.075; ks=0.8; shin=40; ramp=RAMP.iron;
+      if (!hTop) ao = 0.6+0.4*clamp(pz/0.8,0,1);
+    } else { // outside the map
+      ar=0.04; ag=0.04; ab=0.045; ramp=RAMP.rock;
+    }
+    if (hTop) ao *= aoTop(px,py,pz);
+  }
+  light(px,py,pz,nx,ny,nz,ar,ag,ab,ks,shin,ao);
+  ORAMP = ramp;
+}
+
+// filmic tonemap -> display
+function tm(x){ x*=1.25; const y = (x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14); return y<0?0:y>1?1:Math.pow(y,1/2.2); }
+
+// ---------- camera ----------
+let cdx=0, cdy=0, cdz=0, crx=0, cry=0, cux=0, cuy=0, cuz=0, upp=0, cwU=0, chU=0;
+const T0 = 40;
+function setupCamera(){
+  const cp=Math.cos(camPitch), sp=Math.sin(camPitch);
+  cdx=cp*Math.cos(camYaw); cdy=cp*Math.sin(camYaw); cdz=-sp;
+  crx=Math.sin(camYaw); cry=-Math.cos(camYaw);
+  cux = cry*cdz - 0*cdy; cuy = 0*cdx - crx*cdz; cuz = crx*cdy - cry*cdx;
+  vx=-cdx; vy=-cdy; vz=-cdz;
+  const minDimPx = Math.min(cols*cwp, rows*chp*1.25);
+  upp = ((minDimPx/dpr < 700 ? 9 : 12)/zoom)/minDimPx;
+  cwU = cwp*upp; chU = chp*upp;
+}
+function project(x,y,z){
+  const rx=x-camX, ry=y-camY, rz=z-camZ;
+  return [ (rx*crx+ry*cry)/cwU + cols/2, rows/2 - (rx*cux+ry*cuy+rz*cuz)/chU, rx*cdx+ry*cdy+rz*cdz + T0 ];
+}
+
+// ---------- frame render ----------
+function render(){
+  setupCamera();
+  buildScene();
+  for (let i=0;i<NS;i++){
+    const p = project(SX[i],SY[i],SZ[i]);
+    SCOL[i]=p[0]; SROW[i]=p[1];
+    SEXX[i]=SA[i]/cwU+1.2; SEXY[i]=Math.max(SA[i],SC[i])/chU+1.2;
+  }
+  const bx = camX - cdx*T0, by = camY - cdy*T0, bz = camZ - cdz*T0;
+  const cbuf = colorImg.data, wbuf = glowImg.data;
+  for (let j=0;j<rows;j++){
+    const sy = (rows/2 - j - 0.5)*chU;
+    for (let i=0;i<cols;i++){
+      const sx = (i+0.5-cols/2)*cwU;
+      const ox = bx + crx*sx + cux*sy, oy = by + cry*sx + cuy*sy, oz = bz + cuz*sy;
+      traceTerrain(ox,oy,oz,cdx,cdy,cdz);
+      hS = -1;
+      let t = hT;
+      for (let s=0;s<NS;s++){
+        if (Math.abs(i+0.5-SCOL[s])>SEXX[s] || Math.abs(j+0.5-SROW[s])>SEXY[s]) continue;
+        const ts = hitEllipsoid(s, ox,oy,oz,cdx,cdy,cdz);
+        if (ts>0 && ts<t){
+          t=ts; hS=s; hM=SM[s];
+          const px=ox+cdx*t, py=oy+cdy*t, pz=oz+cdz*t, k=SA[s]/SC[s];
+          let nx=px-SX[s], ny=py-SY[s], nz=(pz-SZ[s])*k*k; const nn=1/Math.hypot(nx,ny,nz);
+          hNX=nx*nn; hNY=ny*nn; hNZ=nz*nn;
+        }
+      }
+      const px=ox+cdx*t, py=oy+cdy*t, pz=oz+cdz*t;
+      const c = j*cols+i;
+      depthBuf[c]=t; pickX[c]=hS>=0?SX[hS]:px; pickY[c]=hS>=0?SY[hS]:py;
+      shadeHit(px,py,pz);
+      colR[c]=OR; colG[c]=OG; colB[c]=OB;
+      const r=tm(OR), g=tm(OG), b=tm(OB);
+      const L = 0.2126*r+0.7152*g+0.0722*b;
+      const ramp = ORAMP, n = ramp.length;
+      const dither = (hash2(i*3+(hS>=0?7:0), j*5) - 0.5)*0.1;
+      let lv = OEMIT ? 0.55+L*0.6 : Math.pow(L,1.15)*1.1 + dither;
+      let gi = Math.round(clamp(lv,0,1)*(n-1));
+      if (gi===0 && L>0.018) gi=1;
+      gIdx[c] = ramp[gi];
+      // glyph colour: brighten so thin glyphs still read; glyph density carries the darkness
+      const boost = 1.25 + 0.9*(1-Math.min(1,L*2));
+      const o = c*4;
+      cbuf[o]=Math.min(255,r*boost*255); cbuf[o+1]=Math.min(255,g*boost*255); cbuf[o+2]=Math.min(255,b*boost*255); cbuf[o+3]=255;
+      wbuf[o]=r*120; wbuf[o+1]=g*120; wbuf[o+2]=b*120; wbuf[o+3]=255;
+    }
+  }
+  drawParticles(cbuf, wbuf);
+  composite();
+}
+
+function drawParticles(cbuf, wbuf){
+  for (const p of parts){
+    const q = project(p.x,p.y,p.z);
+    const i = Math.floor(q[0]), j = Math.floor(q[1]);
+    if (i<0||j<0||i>=cols||j>=rows) continue;
+    const c = j*cols+i;
+    if (q[2] > depthBuf[c]+0.05) continue;
+    const k = p.life/p.max;
+    let r,g,b;
+    if (p.emit){ r=p.r*k; g=p.g*k*k; b=p.b*k*k*k; }
+    else { // cheap lighting for debris: nearest lights, no shadows
+      let lr=ambR*4+dirR*0.5, lg=ambG*4+dirG*0.5, lb=ambB*4+dirB*0.5;
+      for (let l=0;l<NL;l++){ const d2=(LX[l]-p.x)**2+(LY[l]-p.y)**2+(LZ[l]-p.z)**2; const a=1/(1+d2*0.45); lr+=LR[l]*a; lg+=LG[l]*a; lb+=LB[l]*a; }
+      r=p.r*lr; g=p.g*lg; b=p.b*lb;
+    }
+    const tr=tm(r), tg=tm(g), tb=tm(b);
+    const o=c*4;
+    cbuf[o]=Math.min(255,cbuf[o]*0.2+tr*300); cbuf[o+1]=Math.min(255,cbuf[o+1]*0.2+tg*300); cbuf[o+2]=Math.min(255,cbuf[o+2]*0.2+tb*300);
+    if (p.emit){ wbuf[o]=Math.min(255,wbuf[o]+tr*90); wbuf[o+1]=Math.min(255,wbuf[o+1]+tg*90); wbuf[o+2]=Math.min(255,wbuf[o+2]+tb*90); }
+    gIdx[c] = CHAR_IDX[p.ch];
+  }
+}
+
+function composite(){
+  gctx.clearRect(0,0,glyphCv.width,glyphCv.height);
+  const space = CHAR_IDX[" "];
+  for (let j=0;j<rows;j++) for (let i=0;i<cols;i++){
+    const g = gIdx[j*cols+i];
+    if (g!==space) gctx.drawImage(atlas, g*cwp,0,cwp,chp, i*cwp,j*chp,cwp,chp);
+  }
+  cctx.putImageData(colorImg,0,0);
+  ctx.globalCompositeOperation='copy';
+  ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(colorCv,0,0,canvas.width,canvas.height);
+  ctx.globalCompositeOperation='destination-in';
+  ctx.drawImage(glyphCv,0,0);
+  if (glow){
+    wctx.putImageData(glowImg,0,0);
+    ctx.globalCompositeOperation='destination-over';
+    ctx.imageSmoothingEnabled=true;
+    ctx.drawImage(glowCv,0,0,canvas.width,canvas.height);
+  }
+  ctx.globalCompositeOperation='destination-over';
+  ctx.fillStyle='#050403'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.globalCompositeOperation='source-over';
+}
+
+// ---------- simulation ----------
+const keys = {};
+let mouseDown=false, mouseCell=null;
+
+function emit(x,y,z,vx_,vy_,vz_,life,r,g,b,ch,emitF,grav){
+  if (parts.length>900) return;
+  parts.push({x,y,z,vx:vx_,vy:vy_,vz:vz_,life,max:life,r,g,b,ch,emit:emitF,grav:grav||0});
+}
+function explode(x,y,z){
+  flashes.push({x,y,z:z+0.3,r:9,g:4.5,b:1.4,rad:9,life:0.45,max:0.45});
+  for (let i=0;i<46;i++){
+    const a=rand()*6.28, e=rand()*1.2, s=2+rand()*5;
+    emit(x,y,z, Math.cos(a)*Math.cos(e)*s, Math.sin(a)*Math.cos(e)*s, Math.sin(e)*s, 0.4+rand()*0.5,
+         7,3.2,1, rand()<0.5?"*":"'", true, 7);
+  }
+}
+function shatter(s){
+  for (let i=0;i<26;i++){
+    const a=rand()*6.28, sp=1+rand()*3;
+    emit(s.x,s.y,s.z+0.4+rand()*0.7, Math.cos(a)*sp, Math.sin(a)*sp, 1+rand()*3, 1.2+rand()*1.5,
+         0.62,0.57,0.46, rand()<0.5?",":"`", false, 9);
+  }
+}
+
+let fireCd = 0;
+function castFireball(tx,ty){
+  if (fireCd>0) return;
+  if (tx==null){
+    // aim at the nearest skeleton, else straight ahead
+    let best=null, bd=12;
+    for (const s of skels){ if (s.dead) continue; const d=Math.hypot(s.x-player.x,s.y-player.y); if (d<bd){bd=d;best=s;} }
+    if (best){ tx=best.x; ty=best.y; } else { tx=player.x+Math.cos(camYaw)*5; ty=player.y+Math.sin(camYaw)*5; }
+  }
+  let dx=tx-player.x, dy=ty-player.y; const d=Math.hypot(dx,dy)||1; dx/=d; dy/=d;
+  fireballs.push({x:player.x+dx*0.5, y:player.y+dy*0.5, z:player.z+1.0, vx:dx*11, vy:dy*11, life:1.6});
+  fireCd = 0.32;
+}
+
+function tryMove(e, dx, dy){
+  if (walkable(e.x+dx, e.y)) e.x += dx;
+  if (walkable(e.x, e.y+dy)) e.y += dy;
+}
+
+function update(dt){
+  time += dt;
+  fireCd = Math.max(0, fireCd-dt);
+  // camera rotation eases toward target
+  camYaw += (camYawT-camYaw)*Math.min(1, dt*6);
+
+  // --- player movement ---
+  const fx=Math.cos(camYaw), fy=Math.sin(camYaw), rx=Math.sin(camYaw), ry=-Math.cos(camYaw);
+  let mx=0, my=0;
+  if (keys.w||keys.arrowup){ mx+=fx; my+=fy; }
+  if (keys.s||keys.arrowdown){ mx-=fx; my-=fy; }
+  if (keys.d||keys.arrowright){ mx+=rx; my+=ry; }
+  if (keys.a||keys.arrowleft){ mx-=rx; my-=ry; }
+  if (mx||my){ player.tx=null; }
+  else if (player.tx!=null){
+    const dx=player.tx-player.x, dy=player.ty-player.y, d=Math.hypot(dx,dy);
+    if (d<0.12) player.tx=null; else { mx=dx/d; my=dy/d; }
+  }
+  const ml=Math.hypot(mx,my);
+  if (ml>0){ const sp=4.2*dt/ml; const ox=player.x, oy=player.y; tryMove(player, mx*sp, my*sp);
+    if (player.tx!=null && Math.hypot(player.x-ox,player.y-oy)<0.0005) player.tx=null; }
+  player.z += (groundAt(player.x,player.y)-player.z)*Math.min(1,dt*14);
+  player.hurt = Math.max(0, player.hurt-dt);
+  player.hp = Math.min(100, player.hp + dt*2.5);
+
+  // --- skeletons ---
+  for (const s of skels){
+    if (s.dead){ s.dead += dt; continue; }
+    const dx=player.x-s.x, dy=player.y-s.y, d=Math.hypot(dx,dy);
+    let vx_=0, vy_=0, sp=0.8;
+    if (d<9 && lineOfSight(s.x,s.y,player.x,player.y)){ vx_=dx/d; vy_=dy/d; sp=2.1; s.hd=Math.atan2(dy,dx); }
+    else { s.wt-=dt; if (s.wt<=0){ s.wt=1.5+rand()*3; s.hd=rand()*6.28; } vx_=Math.cos(s.hd); vy_=Math.sin(s.hd); }
+    for (const o of skels){ if (o===s||o.dead) continue; const ex=s.x-o.x, ey=s.y-o.y, e=Math.hypot(ex,ey); if (e<0.7&&e>0){ vx_+=ex/e; vy_+=ey/e; } }
+    if (d>0.65){ const ox=s.x, oy=s.y; tryMove(s, vx_*sp*dt, vy_*sp*dt); if (s.x===ox&&s.y===oy) s.wt=0; }
+    else { player.hp -= 14*dt; player.hurt = 0.15; }
+    s.z += (groundAt(s.x,s.y)-s.z)*Math.min(1,dt*14);
+  }
+  for (let i=skels.length-1;i>=0;i--) if (skels[i].dead>4){ skels.splice(i,1); spawnSkeleton(); }
+  if (player.hp<=0){
+    explode(player.x,player.y,player.z+0.5);
+    player.x=40.5; player.y=55.5; player.tx=null; player.hp=100;
+  }
+
+  // --- fireballs ---
+  for (let i=fireballs.length-1;i>=0;i--){
+    const f=fireballs[i];
+    f.x+=f.vx*dt; f.y+=f.vy*dt; f.life-=dt;
+    emit(f.x,f.y,f.z,(rand()-0.5)*0.8,(rand()-0.5)*0.8,0.6+rand(),0.25+rand()*0.2,6,2.6,0.8,rand()<0.5?"*":".",true,-1);
+    let boom = f.life<=0 || getH(Math.floor(f.x),Math.floor(f.y)) > f.z-0.15;
+    for (const s of skels){ if (!s.dead && Math.hypot(s.x-f.x,s.y-f.y)<0.55){ s.dead=0.001; player.kills++; shatter(s); boom=true; } }
+    if (boom){ explode(f.x,f.y,f.z); fireballs.splice(i,1); }
+  }
+  for (let i=flashes.length-1;i>=0;i--){ flashes[i].life-=dt; if (flashes[i].life<=0) flashes.splice(i,1); }
+
+  // --- embers from braziers ---
+  for (const b of BRAZIERS){
+    if (rand()<dt*22) emit(b.x+(rand()-0.5)*0.3, b.y+(rand()-0.5)*0.3, b.z+0.45,
+      (rand()-0.5)*0.4, (rand()-0.5)*0.4, 0.9+rand()*1.3, 0.6+rand()*1.0, 6,2.8,0.9, rand()<0.6?".":"'", true, -0.3);
+  }
+  // --- particles ---
+  for (let i=parts.length-1;i>=0;i--){
+    const p=parts[i];
+    p.life-=dt; if (p.life<=0){ parts.splice(i,1); continue; }
+    p.vz -= p.grav*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.z+=p.vz*dt;
+    if (p.emit && p.grav<0){ p.vx += (rand()-0.5)*dt*3; p.vy += (rand()-0.5)*dt*3; }
+    const g = getH(Math.floor(p.x),Math.floor(p.y));
+    if (p.z<g){ p.z=g; p.vz*=-0.3; p.vx*=0.5; p.vy*=0.5; }
+  }
+
+  // camera follows with a little lag
+  const k=Math.min(1,dt*5);
+  camX += (player.x-camX)*k; camY += (player.y-camY)*k; camZ += (player.z+0.6-camZ)*k;
+}
+
+// ---------- input ----------
+function cellAt(e){
+  const r=canvas.getBoundingClientRect();
+  const i=Math.floor((e.clientX-r.left)/r.width*cols), j=Math.floor((e.clientY-r.top)/r.height*rows);
+  if (i<0||j<0||i>=cols||j>=rows) return null;
+  return j*cols+i;
+}
+canvas.addEventListener('contextmenu', e=>e.preventDefault());
+canvas.addEventListener('pointerdown', e=>{
+  const c=cellAt(e); if (c==null) return;
+  if (e.button===2 || e.shiftKey){ castFireball(pickX[c],pickY[c]); return; }
+  mouseDown=true; player.tx=pickX[c]; player.ty=pickY[c];
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e=>{
+  mouseCell=cellAt(e);
+  if (mouseDown && mouseCell!=null){ player.tx=pickX[mouseCell]; player.ty=pickY[mouseCell]; }
+});
+canvas.addEventListener('pointerup', ()=>{ mouseDown=false; });
+canvas.addEventListener('pointercancel', ()=>{ mouseDown=false; });
+canvas.addEventListener('wheel', e=>{ e.preventDefault(); zoom = clamp(zoom*Math.exp(-e.deltaY*0.0012), 0.55, 2.2); }, {passive:false});
+
+function toggleNight(){ night=!night; document.getElementById('night').textContent = night ? "day" : "night"; }
+function rotate(dir){ camYawT += dir*Math.PI/4; }
+function setDetail(delta){ fontPx = clamp(fontPx+delta, 6, 18); resize(); }
+window.addEventListener('keydown', e=>{
+  const k=e.key.toLowerCase();
+  if (e.target.tagName==='BUTTON' && (k===' '||k==='enter')) return;
+  keys[k]=true;
+  if (k===' '){ e.preventDefault(); const c=mouseCell; castFireball(c!=null?pickX[c]:null, c!=null?pickY[c]:null); }
+  if (k==='q') rotate(-1);
+  if (k==='e') rotate(1);
+  if (k==='n') toggleNight();
+  if (k==='g') glow=!glow;
+  if (k==='[') setDetail(1);
+  if (k===']') setDetail(-1);
+});
+window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false; });
+window.addEventListener('blur', ()=>{ for (const k in keys) keys[k]=false; });
+document.getElementById('night').onclick = toggleNight;
+document.getElementById('rotL').onclick = ()=>rotate(-1);
+document.getElementById('rotR').onclick = ()=>rotate(1);
+document.getElementById('fire').onclick = ()=>castFireball(null,null);
+document.getElementById('night').textContent = "day";
+window.addEventListener('resize', ()=>resize());
+
+// ---------- loop ----------
+const hpEl=document.getElementById('hp'), infoEl=document.getElementById('info');
+let last=performance.now(), slowFrames=0, fpsAcc=0, fpsN=0, fpsShown=0, hudT=0;
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000); last=now;
+  update(dt);
+  const t0=performance.now();
+  render();
+  const ms=performance.now()-t0;
+  // keep it playable on slower machines: coarser cells if a frame takes too long
+  if (ms>38) slowFrames++; else slowFrames=Math.max(0,slowFrames-1);
+  if (slowFrames>45 && fontPx<14){ slowFrames=0; setDetail(1); }
+  fpsAcc+=dt; fpsN++;
+  hudT-=dt;
+  if (hudT<=0){
+    hudT=0.25; fpsShown=Math.round(fpsN/fpsAcc); fpsAcc=0; fpsN=0;
+    const bars=Math.round(player.hp/5);
+    hpEl.textContent = "life " + "█".repeat(bars) + "·".repeat(20-bars);
+    infoEl.textContent = `slain ${player.kills}  ·  ${cols}×${rows} cells  ·  ${fpsShown} fps`;
+  }
+  requestAnimationFrame(frame);
+}
+
+function start(){ resize(); requestAnimationFrame(frame); }
+const fontReady = document.fonts && document.fonts.load ? document.fonts.load('600 12px "IBM Plex Mono"') : Promise.resolve();
+Promise.race([fontReady, new Promise(r=>setTimeout(r,1500))]).then(start, start);
+</script>
+</body>
+</html>
