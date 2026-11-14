@@ -147,8 +147,10 @@
 
     var scene = new THREE.Scene();
     var camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
-    var Z_FAR = 9.5, Z_NEAR = 3.3;
-    camera.position.set(0, 0, Z_FAR);
+    // the camera stays at one distance for the whole sequence: each block
+    // changes in place, with no zoom between steps
+    var CAMERA_Z = 9.5;
+    camera.position.set(0, 0, CAMERA_Z);
 
     var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -188,18 +190,12 @@
       pMat.opacity = 1;
     }
 
-    // camera creeps closer with each tier, eases back out on the last two steps
-    var zAt = [];
-    for (var zi = 0; zi < 5; zi++) zAt.push(Z_FAR - (Z_FAR - Z_NEAR) * (zi / 4));
-    zAt.push(Z_NEAR + (Z_FAR - Z_NEAR) * 0.3);
-
     var current = 0, busy = false, stepping = false, exitStep = false, swapped = false;
-    var STEP_MS = 700, stepStart = 0, fromZ = Z_FAR, toZ = Z_FAR, pending = -1;
+    var STEP_MS = 700, stepStart = 0, pending = -1;
     var fromRot = REST, toRot = REST;
 
     function startStep(next, dir, exit) {
       busy = stepping = true; swapped = false; exitStep = exit; pending = next;
-      fromZ = zAt[current]; toZ = exit ? Z_FAR : zAt[next];
       stepStart = performance.now();
       fromRot = { x: cube.rotation.x, y: cube.rotation.y, z: cube.rotation.z };
       function land(rest, sign) { return rest + (1 + Math.floor(Math.random() * 2)) * Math.PI * 2 * sign; }
@@ -299,8 +295,6 @@
         var t = Math.min((performance.now() - stepStart) / STEP_MS, 1);
         var ease = 1 - Math.pow(1 - t, 3);
         cube.rotation.set(fromRot.x + (toRot.x - fromRot.x) * ease, fromRot.y + (toRot.y - fromRot.y) * ease, fromRot.z + (toRot.z - fromRot.z) * ease);
-        cube.scale.setScalar(1 + Math.sin(t * Math.PI) * 0.42);
-        camera.position.z = fromZ + (toZ - fromZ) * ease;
         if (!exitStep && t > 0.5 && !swapped) {
           cube.material = blocks[pending]; swapped = true; current = pending;
           tagEl.textContent = BLOCK_NAMES[current];
@@ -308,7 +302,6 @@
         }
         if (t >= 1) {
           stepping = false;
-          cube.scale.setScalar(1);
           cube.rotation.set(REST.x, REST.y, REST.z);
           if (exitStep) showTitleThenEnd(); else busy = false;
         }
